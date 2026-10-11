@@ -12,7 +12,7 @@ Git repo initialized, **first commit still pending**. No CI.
 - Backend: Python FastAPI (`app/`) serving **JSON only**; Next.js renders all pages.
 - **Open source: MIT license**, public GitHub repo planned (LICENSE file not created yet). Code is free (incl. commercial); monetization is the hosted service only.
 - **Deep learning is in scope** (roadmap rev. Oct 2026): PyTorch — sequential model (LSTM/transformer) on normalized XBRL indicator series (trained on the backtest cohort, inference phase 2), plus a fine-tuned open-source transformer for report text (phase 3). DL signals sit *next to* classic scores, never replacing them unless they beat them on the backtest.
-- Language: **code identifiers, comments, commits in English**; French for user-facing prose (roadmap, docs, UI text).
+- Language: **code identifiers and commit messages in English**; **comments, docstrings and user-facing prose in French** (roadmap, docs, UI text).
 - Approach: full skeleton first (structure + stubs + schema), then fill phase by phase.
 - Dev database: PostgreSQL 17 via Docker. **Port 5435** on the host (5432 is taken by another local container `fa_pg_sql`) — `DATABASE_URL` must say `localhost:5435`.
 
@@ -55,4 +55,4 @@ Git repo initialized, **first commit still pending**. No CI.
 
 ## Style
 
-Code identifiers/comments/commits: English. Prose and user-facing text: French. Match the language of the file you are editing. Detailed explanatory comments in code are explicitly wanted.
+Code identifiers and commit messages: English. Comments, docstrings, prose and user-facing text: French. Match the language of the file you are editing. Detailed explanatory comments in code are explicitly wanted.

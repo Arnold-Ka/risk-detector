@@ -1,52 +1,57 @@
-"""Central application configuration.
+"""Configuration centrale de l'application.
 
-`pydantic_settings.BaseSettings` merges, in this order of precedence:
-  1. real environment variables (e.g. set in the shell / CI)
-  2. values read from the file named in `model_config["env_file"]`
-     — pydantic-settings v2 does NOT load `.env` unless you declare it
-     explicitly below (a ValidationError "Field required" at import time
-     means this config line or the `.env` file is missing)
-  3. the field defaults declared below.
+`pydantic_settings.BaseSettings` fusionne, par ordre de priorité :
+  1. les variables d'environnement réelles (shell, CI, etc.)
+  2. les valeurs lues depuis le fichier `.env` nommé dans `model_config`
+     — pydantic-settings v2 ne lit PAS `.env` tant que ce n'est pas déclaré
+     explicitement ci-dessous (un ValidationError « Field required » à
+     l'import signale que cette config ou le fichier `.env` manque)
+  3. les valeurs par défaut déclarées ci-dessous.
 
-Field name mapping is case-insensitive: `database_url` <- `DATABASE_URL`,
-`sec_user_agent` <- `SEC_USER_AGENT`.
+Correspondance des noms (insensible à la casse) :
+  `database_url` <- `DATABASE_URL`, `sec_user_agent` <- `SEC_USER_AGENT`.
 
-IMPORTANT: `settings = Settings()` runs at IMPORT time. If `.env` is missing
-and the variables are not exported, every module that does
-`from app.config import settings` will CRASH with a pydantic ValidationError.
-That is deliberate: fail fast at startup instead of discovering the problem
-on the first SEC request. `.env` must exist (copy `.env.example`).
+IMPORTANT : `settings = Settings()` s'exécute au moment de l'IMPORT. Si
+`.env` est absent et que les variables ne sont pas exportées, chaque module
+faisant `from app.config import settings` PLANTE avec une ValidationError
+pydantic. C'est volontaire : échouer vite au démarrage plutôt que de
+découvrir le problème à la première requête SEC. `.env` doit exister
+(copier `.env.example`).
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # Point at the repo-root `.env`. Relative to the process working
-    # directory: always run commands from the repo root (uv run, uvicorn).
-    # utf-8 because SEC_USER_AGENT contains accented characters (Prénom).
-    # extra="ignore": the .env file is SHARED with the frontend
-    # (NEXT_PUBLIC_API_URL) and pydantic-settings v2 rejects unknown keys
-    # by default — without this, Settings() crashes on any non-backend var.
+    # Indique le fichier `.env` à la racine du projet. Chemin RELATIF au
+    # répertoire de travail : toujours lancer les commandes depuis la racine
+    # (uv run, uvicorn). utf-8 parce que SEC_USER_AGENT contient des accents
+    # (Prénom).
+    # extra="ignore" : le `.env` est PARTAGÉ avec le frontend
+    # (NEXT_PUBLIC_API_URL) et pydantic-settings v2 rejette les clés
+    # inconnues par défaut — sans cette option, Settings() plante dès qu'une
+    # variable non backend apparaît.
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
-    # DSN used by app/db/repo.py, e.g. postgresql://risk:risk@localhost:5435/risks
-    # Port 5435: docker-compose publishes 5435 (5432 is taken by another local container).
+    # DSN utilisé par app/db/repo.py, ex. postgresql://risk:risk@localhost:5435/risks
+    # Port 5435 : docker-compose publie 5435 (5432 est pris par un autre
+    # conteneur local fa_pg_sql).
     database_url: str
 
-    # REQUIRED by SEC EDGAR's terms of access: "name + email" in the User-Agent,
-    # or requests get blocked. Set a real address in `.env` before phase 0.
+    # REQUIS par les conditions d'accès à la SEC EDGAR : « nom + e-mail »
+    # dans le User-Agent, sinon les requêtes sont bloquées. Renseigner une
+    # adresse réelle dans `.env` avant la phase 0.
     sec_user_agent: str
 
-    # Where raw EDGAR responses are cached on disk (gitignored).
+    # Où les réponses EDGAR brutes sont mises en cache sur disque (gitignoré).
     cache_dir: str = "data/cache"
 
 
-# Single module-level instance: one source of truth for the whole app.
-# Never read os.environ["DATABASE_URL"] directly elsewhere — `.env` values are
-# visible to pydantic but NOT to os.environ.
+# Instance unique au niveau module : une seule source de vérité pour toute
+# l'application. Ne jamais lire os.environ["DATABASE_URL"] ailleurs — les
+# valeurs de `.env` sont visibles par pydantic mais PAS par os.environ.
 settings = Settings()

@@ -1,31 +1,35 @@
-"""Altman Z-score — probability of financial distress within 2 years.
+"""Z-score d'Altman — probabilité de détresse financière sous 2 ans.
 
-Inputs are the five raw variables of the formula, already normalized from
-XBRL (phase 1 normalizer). They map to the classic ratios as:
+Les entrées sont les cinq variables brutes de la formule, déjà normalisées
+à partir de XBRL (normaliseur phase 1). Elles se mappent vers les ratios
+classiques :
 
-    A = working_capital  / total_assets      (liquidity)
-    B = retained_earnings / total_assets     (accumulated profitability)
-    C = ebit             / total_assets      (operating profitability)
-    D = market_value_debt / total_assets     <- NOTE: roadmap defines D as
-        market value of equity / total debt; confirm the exact variant
-        when implementing (public-manufacturer vs public-non-manufacturer
-        Z-scores do not use the same coefficients).
-    E = sales            / total_assets      (asset turnover)
+    A = fonds de roulement  / actif total      (liquidité)
+    B = bénéfices non distribués / actif total (rentabilité cumulée)
+    C = ebit                / actif total      (rentabilité opérationnelle)
+    D = market_value_debt   / actif total      <- ATTENTION : la feuille de
+        route définit D comme valeur boursière / dettes totales ; confirmer
+        la variante exacte à l'implémentation (Z-scores « public
+        manufacturers » vs « public non-manufacturers » n'utilisent pas les
+        mêmes coefficients).
+    E = chiffre d'affaires  / actif total      (rotation des actifs)
 
     Z = 1.2*A + 1.4*B + 3.3*C + 0.6*D + 1.0E
 
-Interpretation thresholds (public manufacturing issuers):
-    Z > 2.99  safe zone
-    1.81-2.99 grey zone (one year from distress)
-    Z < 1.81  distress zone  <-- the alert trigger
+Seuils d'interprétation (emetteurs industriels cotés) :
+    Z > 2.99  zone sûre
+    1.81–2.99 zone grise (à un an de la détresse)
+    Z < 1.81  zone de détresse  <-- déclencheur d'alerte
 
-Sector caveat (roadmap §2): the score is NOT reliable for banks, insurers
-and REITs. The caller must filter on companies.sector_group first.
+Avertissement de secteur (feuille de route §2) : le score n'est PAS fiable
+pour les banques, les assurances et les REIT. L'appelant doit filtrer sur
+companies.sector_group en amont.
 """
 
 
-# BUGFIX: function was named `alman_z` (typo). Renamed to `altman_z` so it
-# matches the formula's name; no other module imported it yet.
+# CORRECTIF : la fonction s'appelait `alman_z` (coquille). Renommée
+# `altman_z` pour correspondre au nom de la formule ; aucun autre module ne
+# l'importait encore.
 def altman_z(
     working_capital,
     total_assets,
@@ -34,28 +38,28 @@ def altman_z(
     market_value_debt,
     sales,
 ) -> float | None:
-    """Return the Z-score, or None when data is missing.
+    """Renvoie le Z-score, ou None quand les données manquent.
 
-    `float | None` is the mechanism enforcing the product rule "show
-    'donnée manquante' rather than a wrong score": callers MUST handle None
-    (display "data missing") instead of defaulting to 0.0, which would look
-    like an extreme-distress score.
+    `float | None` est le mécanisme qui applique la règle produit « afficher
+    'donnée manquante' plutôt qu'un faux score » : l'appelant DOIT gérer
+    None (afficher « donnée manquante ») au lieu de se rabattre sur 0.0, qui
+    ressemblerait à un score de détresse extrême.
     """
-    # Guard 1 — missing denominator: without total_assets every ratio is
-    # undefined (division by zero). Falsy check also catches 0 and None.
+    # Garde 1 — dénominateur manquant : sans total_assets, chaque ratio est
+    # indéfini (division par zéro). Le test « truthy » capture aussi 0 et None.
     if not total_assets:
         return None
 
-    # TODO(phase 1): compute the five ratios and the weighted sum, e.g.
+    # TODO(phase 1) : calculer les cinq ratios et la somme pondérée, ex. :
     #   a = working_capital / total_assets
     #   b = retained_earnings / total_assets
     #   c = ebit / total_assets
-    #   d = market_value_debt / total_assets   (see docstring note on D)
+    #   d = market_value_debt / total_assets   (voir note D dans la docstring)
     #   e = sales / total_assets
     #   return 1.2*a + 1.4*b + 3.3*c + 0.6*d + 1.0*e
     #
-    # Current state: falls through and returns None, i.e. the function is
-    # still "always missing data" — harmless (never a fake score) but
-    # useless. Do not ship until the formula above is implemented and
-    # covered by a test (tests/test_altman.py).
+    # État actuel : chute à travers et renvoie None, c'est-à-dire que la
+    # fonction est toujours « donnée manquante » — inoffensif (jamais un
+    # faux score) mais inutile. Ne pas livrer tant que la formule ci-dessus
+    # n'est pas implémentée et couverte par un test (tests/test_altman.py).
     return None

@@ -1,32 +1,37 @@
-"""Nightly batch job — the precomputation heart of the product.
+"""Job batch nocturne — le cœur de la précalculation du produit.
 
-Roadmap principle: "precompute at night rather than compute on request".
-The API only READS signals; this job is the only writer.
+Principe de la feuille de route : « pré-calculer la nuit plutôt que de
+calculer à la demande ». L'API ne fait que LIRE les signaux ; ce job est le
+seul écrivain.
 
-Planned pipeline (phase 1):
-    1. fetch    — download new EDGAR data (bulk companyfacts/submissions
-                  ZIPs + incremental 8-K, Form 4) via app.edgar.client
-    2. normalize — map heterogeneous XBRL tags to standard indicators
-                  (app/normalize/, driven by xbrl_map.yaml)
-    3. signals  — run app/signals/* calculators and event detectors,
-                  store each result with date + source filing (traceability)
+Pipeline prévu (phase 1) :
+    1. fetch      — télécharger les nouvelles données EDGAR (archives
+                    companyfacts/submissions massives + 8-K et Form 4
+                    incrémentaux) via app.edgar.client
+    2. normalize  — mapper les tags XBRL hétérogènes vers des indicateurs
+                    standard (app/normalize/, piloté par xbrl_map.yaml)
+    3. signals    — exécuter les calculateurs et détecteurs d'événements
+                    app/signals/*, stocker chaque résultat avec sa date et
+                    son dépôt source (traçabilité)
 
-Invocation (from the repo root, so that `app` is importable):
+Invocation (depuis la racine du projet, pour que `app` soit importable) :
     uv run python -m app.jobs.nightly
-The `-m` flag matters: it puts the current directory on sys.path; running
-`python app/jobs/nightly.py` directly would fail to import `app.*`.
+Le drapeau `-m` est important : il ajoute le répertoire courant au
+sys.path ; lancer `python app/jobs/nightly.py` directement échouerait sur
+les imports `app.*`.
 
-Scheduling: manual during dev; `cron` on the VPS in production
-(scheduler choice per roadmap §4 — cron first, RQ/Celery only in phase 2+).
+Planification : manuel en dev ; `cron` sur le VPS en production (choix de
+planificateur selon la feuille de route §4 — cron d'abord, RQ/Celery
+seulement en phase 2+).
 """
 
 
 def main():
-    # TODO(phase 1): replace with the fetch -> normalize -> signals pipeline.
+    # TODO(phase 1) : remplacer par le pipeline fetch -> normalize -> signals.
     print("nightly: fetch -> normalize -> signals (TODO phase 1)")
 
 
 if __name__ == "__main__":
-    # Enables `python -m app.jobs.nightly`; guards against main() running
-    # when this file is merely imported by another module or a test.
+    # Active `python -m app.jobs.nightly` ; évite que main() s'exécute quand
+    # ce fichier est simplement importé par un autre module ou un test.
     main()

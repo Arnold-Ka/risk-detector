@@ -1,40 +1,42 @@
-"""FastAPI application — the HTTP layer of the backend.
+"""Application FastAPI — la couche HTTP du backend.
 
-Scope (roadmap §4): JSON API only. Pages are rendered by the Next.js
-frontend (`frontend/`), which calls these endpoints. The backend never
-renders HTML itself.
+Périmètre (feuille de route §4) : API JSON uniquement. Les pages sont
+rendues par le frontend Next.js (`frontend/`), qui appelle ces endpoints.
+Le backend ne rend jamais de HTML lui-même.
 """
 
 from fastapi import FastAPI, HTTPException
 
-# `title` shows up in the auto-generated docs at /docs and /redoc —
-# useful to test endpoints by hand while the frontend is not ready yet.
+# `title` apparaît dans la documentation auto-générée (/docs et /redoc) —
+# utile pour tester les endpoints à la main tant que le frontend n'existe pas.
 app = FastAPI(title="Risk Detector API")
 
 
 @app.get("/health")
 def health():
-    """Liveness probe.
+    """Sonde de vivacité (liveness).
 
-    Used by docker --wait style checks, the frontend, and us humans to answer
-    "is the API up?" without touching the database. Deliberately does NOT
-    query Postgres: health == process answers, DB readiness is checked
-    separately (see docker compose ps for the db service).
+    Utilisée par les vérifications de type docker --wait, par le frontend et
+    par nous-mêmes pour répondre « l'API est-elle levée ? » sans toucher à la
+    base de données. Délibérément SANS requête Postgres : santé = le processus
+    répond, la disponibilité de la DB se vérifie ailleurs (docker compose ps
+    du service db).
     """
     return {"status": "ok"}
 
 
 @app.get("/companies/{cik}")
 def get_company(cik: int):
-    """Risk sheet for one company, addressed by its SEC CIK identifier.
+    """Fiche de risque d'une entreprise, identifiée par son CIK SEC.
 
-    501 = "implemented later, on purpose". We return an explicit error rather
-    than an empty object because the product rule is: show missing data as
-    missing data, never a fake/wrong answer (roadmap §3 "donnée manquante").
-    To be implemented in phase 1 once `companies`/`signals` are populated.
+    501 = « implémenté plus tard, volontairement ». On renvoie une erreur
+    explicite plutôt qu'un objet vide car la règle produit est : afficher les
+    données manquantes comme manquantes, jamais une fausse réponse
+    (feuille de route §3 « donnée manquante »). À implémenter en phase 1,
+    quand `companies` et `signals` seront peuplées.
 
-    Note: plain `def` (not `async def`) is fine here — FastAPI runs sync
-    endpoints in a threadpool, and DB calls in phase 1 are blocking psycopg
-    anyway, so async would buy nothing.
+    Note : un `def` simple (pas `async def`) suffit ici — FastAPI exécute les
+    endpoints synchrones dans une threadpool, et les appels BDD en phase 1
+    seront du psycopg bloquant : l'async n'apporterait rien.
     """
     raise HTTPException(status_code=501, detail="Not Implemented - Phase 1")

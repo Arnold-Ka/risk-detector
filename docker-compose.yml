@@ -1,32 +1,36 @@
-# PostgreSQL 17 for local development.
-# Bootstrap: on the FIRST start of a fresh volume, the entrypoint executes
-# every *.sql mounted in /docker-entrypoint-initdb.d/ — that is how
-# app/db/schema.sql creates the 7 tables. Replaying schema changes requires
-# `docker compose down -v` (destroy the volume) until real migrations exist.
+# PostgreSQL 17 pour le développement local.
+# Amorçage : au PREMIER démarrage d'un volume vierge, l'entrypoint exécute
+# tous les *.sql montés dans /docker-entrypoint-initdb.d/ — c'est ainsi que
+# app/db/schema.sql crée les 7 tables. Rejouer un changement de schéma
+# impose `docker compose down -v` (détruire le volume) tant qu'il n'existe
+# pas de vraies migrations.
 services:
   db:
     image: postgres:17
     environment:
       POSTGRES_USER: risk
-      POSTGRES_PASSWORD: risk        # dev-only credentials, never used in prod
-      POSTGRES_DB: risks             # must match the DB name in DATABASE_URL
+      POSTGRES_PASSWORD: risk        # identifiants de dev uniquement, jamais en prod
+      POSTGRES_DB: risks             # doit correspondre au nom de DB de DATABASE_URL
     ports:
-      # 5435 (host) -> 5432 (container): 5432 is already taken by another
-      # local container (fa_pg_sql). DATABASE_URL must use 5435 accordingly.
+      # 5435 (hôte) -> 5432 (conteneur) : 5432 est déjà pris par un autre
+      # conteneur local (fa_pg_sql). DATABASE_URL doit donc dire 5435.
       - "5435:5432"
     volumes:
-      # Named volume = data survives `docker compose down`, lost on `down -v`.
-      # Target must be EXACTLY /var/lib/postgresql/data (PGDATA); a typo here
-      # silently disables persistence because postgres writes elsewhere.
+      # Volume nommé = les données survivent à `docker compose down`, sont
+      # perdues avec `down -v`.
+      # La cible doit être EXACTEMENT /var/lib/postgresql/data (PGDATA) ; une
+      # coquille ici désactive silencieusement la persistance car postgres
+      # écrit ailleurs.
       - pgdata:/var/lib/postgresql/data
-      # Bind-mount the schema so initdb applies it on first boot.
-      # If this host path is missing, Docker creates an empty DIRECTORY in
-      # its place and initdb chokes on it — keep the file real.
+      # Montage du schéma pour qu'initdb l'applique au premier boot.
+      # Si le chemin hôte est absent, Docker crée un RÉPERTOIRE vide à sa
+      # place et initdb échoue dessus — garder le fichier réel.
       - ./app/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
     healthcheck:
-      # `docker compose up -d --wait` blocks until this passes; an invalid
-      # pg_isready call (e.g. `-U` without value) would make --wait hang.
-      # User (-U) and database (-d) must match the env block above.
+      # `docker compose up -d --wait` bloque jusqu'à ce que ce test passe ;
+      # un appel pg_isready invalide (ex. `-U` sans valeur) ferait attendre
+      # --wait indéfiniment. L'utilisateur (-U) et la base (-d) doivent
+      # correspondre au bloc environment ci-dessus.
       test: ["CMD-SHELL", "pg_isready -U risk -d risks"]
       interval: 5s
       retries: 10

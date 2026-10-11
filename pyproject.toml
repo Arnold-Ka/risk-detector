@@ -1,25 +1,26 @@
-# Project manifest, managed by uv (`uv add <pkg>` rewrites the deps array —
-# keep comments outside that array or they will be lost).
-# Python 3.14: pinned to match the existing .venv (created by uv 0.11.7).
+# Manifeste du projet, géré par uv (`uv add <pkg>` réécrit le tableau des
+# dépendances — garder les commentaires HORS de ce tableau ou ils seront
+# perdus).
+# Python 3.14 : aligné sur le .venv existant (créé par uv 0.11.7).
 
 [project]
 name = "risk-detector"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.143.0",           # API framework (roadmap stack)
-    "httpx>=0.28.1",              # HTTP client for app/edgar/client.py (+ FastAPI TestClient)
-    "psycopg[binary]>=3.3.6",     # PostgreSQL driver, raw SQL (no ORM by design)
-    "pydantic-settings>=2.15.0",  # .env -> typed settings (app/config.py)
-    "pytest>=9.1.1",              # test runner (tests/ dir still to be created)
-    "pyyaml>=6.0.3",              # future app/normalize/xbrl_map.yaml
-    "requests>=2.34.2",           # kept for simple sync scripts; prefer httpx in app/
-    "uvicorn[standard]>=0.54.0",  # ASGI server running app.api.main:app
+    "fastapi>=0.143.0",           # framework d'API (pile de la feuille de route)
+    "httpx>=0.28.1",              # client HTTP pour app/edgar/client.py (+ FastAPI TestClient)
+    "psycopg[binary]>=3.3.6",     # pilote PostgreSQL, SQL brut (pas d'ORM, par choix)
+    "pydantic-settings>=2.15.0",  # .env -> settings typés (app/config.py)
+    "pytest>=9.1.1",              # lanceur de tests (répertoire tests/ à créer)
+    "pyyaml>=6.0.3",              # futur app/normalize/xbrl_map.yaml
+    "requests>=2.34.2",           # gardé pour les scripts synchrones simples ; préférer httpx dans app/
+    "uvicorn[standard]>=0.54.0",  # serveur ASGI lançant app.api.main:app
 ]
 
-# pytest configuration: tests are looked up under tests/ (NOT in app/ —
-# the default testpaths would also collect .venv noise).
-# NOTE: tests/ does not exist yet; `uv run pytest` collects nothing (exit 5)
-# until the first test file is added.
+# Configuration pytest : les tests sont cherchés sous tests/ (PAS dans app/ —
+# sans testpaths, pytest explorerait aussi le bruit de .venv).
+# NOTE : tests/ n'existe pas encore ; `uv run pytest` ne collecte rien
+# (code de sortie 5) tant que le premier fichier de test n'est pas ajouté.
 [tool.pytest.ini_options]
 testpaths = ["tests"]

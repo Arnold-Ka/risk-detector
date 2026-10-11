@@ -1,13 +1,14 @@
-"""Database access layer (thin, raw SQL on purpose).
+"""Couche d'accès à la base de données (fine, SQL brut volontairement).
 
-Why no ORM (yet): the roadmap's #1 product principle is traceability —
-every displayed score must show the exact numbers and filing it came from.
-Explicit SQL keeps that mapping obvious. Revisit (SQLAlchemy/Alembic) only
-when the schema starts changing regularly in production.
+Pourquoi pas d'ORM (pour l'instant) : le principe produit nº1 de la feuille
+de route est la traçabilité — chaque score affiché doit montrer les chiffres
+exacts et le dépôt dont il vient. Le SQL explicite garde cette correspondance
+évidente. Réévaluer (SQLAlchemy/Alembic) uniquement quand le schéma bougera
+régulièrement en production.
 
-Schema lives in `app/db/schema.sql`, applied automatically by the
-docker-entrypoint-initdb.d mount on the FIRST start of a fresh volume
-(`docker compose down -v` to replay it in dev).
+Le schéma vit dans `app/db/schema.sql`, appliqué automatiquement par le
+montage docker-entrypoint-initdb.d au PREMIER démarrage d'un volume vierge
+(`docker compose down -v` pour rejouer en dev).
 """
 
 import psycopg
@@ -16,16 +17,17 @@ from app.config import settings
 
 
 def get_conn():
-    """Open a psycopg connection from the configured DSN.
+    """Ouvre une connexion psycopg à partir du DSN configuré.
 
-    - Uses `settings.database_url` (pydantic-settings) instead of
-      `os.environ["DATABASE_URL"]`: the latter ignores `.env` values, which
-      only pydantic sees. Reading os.environ is a classic "works in CI,
-      crashes locally" trap here.
-    - psycopg.connect() is LAZY: it builds the connection object and only
-      really dials the server on the first query/commit.
-    - The caller owns the connection: `with get_conn() as conn:` closes it
-      on exit (or call .close()). There is no connection pool yet — fine for
-      nightly batch jobs; add one (psycopg_pool) when the API serves traffic.
+    - Utilise `settings.database_url` (pydantic-settings) et non
+      `os.environ["DATABASE_URL"]` : ce dernier ignore les valeurs de
+      `.env`, que seul pydantic voit. Lire os.environ est un piège classique
+      « ça marche en CI, ça plante en local ».
+    - psycopg.connect() est LAZY : il construit l'objet connexion et ne
+      compose réellement avec le serveur qu'au premier query/commit.
+    - La connexion appartient à l'appelant : `with get_conn() as conn:`
+      la ferme à la sortie (ou appeler .close()). Pas de pool de connexions
+      pour l'instant — suffisant pour des jobs batchs de nuit ; ajouter
+      psycopg_pool quand l'API servira du trafic.
     """
     return psycopg.connect(settings.database_url)
