@@ -1,0 +1,25 @@
+# Project manifest, managed by uv (`uv add <pkg>` rewrites the deps array —
+# keep comments outside that array or they will be lost).
+# Python 3.14: pinned to match the existing .venv (created by uv 0.11.7).
+
+[project]
+name = "risk-detector"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.143.0",           # API framework (roadmap stack)
+    "httpx>=0.28.1",              # HTTP client for app/edgar/client.py (+ FastAPI TestClient)
+    "psycopg[binary]>=3.3.6",     # PostgreSQL driver, raw SQL (no ORM by design)
+    "pydantic-settings>=2.15.0",  # .env -> typed settings (app/config.py)
+    "pytest>=9.1.1",              # test runner (tests/ dir still to be created)
+    "pyyaml>=6.0.3",              # future app/normalize/xbrl_map.yaml
+    "requests>=2.34.2",           # kept for simple sync scripts; prefer httpx in app/
+    "uvicorn[standard]>=0.54.0",  # ASGI server running app.api.main:app
+]
+
+# pytest configuration: tests are looked up under tests/ (NOT in app/ —
+# the default testpaths would also collect .venv noise).
+# NOTE: tests/ does not exist yet; `uv run pytest` collects nothing (exit 5)
+# until the first test file is added.
+[tool.pytest.ini_options]
+testpaths = ["tests"]

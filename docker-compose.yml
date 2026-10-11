@@ -1,0 +1,35 @@
+# PostgreSQL 17 for local development.
+# Bootstrap: on the FIRST start of a fresh volume, the entrypoint executes
+# every *.sql mounted in /docker-entrypoint-initdb.d/ — that is how
+# app/db/schema.sql creates the 7 tables. Replaying schema changes requires
+# `docker compose down -v` (destroy the volume) until real migrations exist.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: risk
+      POSTGRES_PASSWORD: risk        # dev-only credentials, never used in prod
+      POSTGRES_DB: risks             # must match the DB name in DATABASE_URL
+    ports:
+      # 5435 (host) -> 5432 (container): 5432 is already taken by another
+      # local container (fa_pg_sql). DATABASE_URL must use 5435 accordingly.
+      - "5435:5432"
+    volumes:
+      # Named volume = data survives `docker compose down`, lost on `down -v`.
+      # Target must be EXACTLY /var/lib/postgresql/data (PGDATA); a typo here
+      # silently disables persistence because postgres writes elsewhere.
+      - pgdata:/var/lib/postgresql/data
+      # Bind-mount the schema so initdb applies it on first boot.
+      # If this host path is missing, Docker creates an empty DIRECTORY in
+      # its place and initdb chokes on it — keep the file real.
+      - ./app/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      # `docker compose up -d --wait` blocks until this passes; an invalid
+      # pg_isready call (e.g. `-U` without value) would make --wait hang.
+      # User (-U) and database (-d) must match the env block above.
+      test: ["CMD-SHELL", "pg_isready -U risk -d risks"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata:

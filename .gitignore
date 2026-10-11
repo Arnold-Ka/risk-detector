@@ -1,0 +1,14 @@
+.venv/
+.ipynb_checkpoints/
+__pycache__/
+data.sqlite
+
+# Secrets / local config — must stay out of git
+.env
+
+# Frontend (created in a later step)
+node_modules/
+frontend/.next/
+
+# EDGAR raw responses cache (created by app/edgar/client.py)
+data/cache/
