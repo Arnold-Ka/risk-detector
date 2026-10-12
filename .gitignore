@@ -1,6 +1,7 @@
 .venv/
 .ipynb_checkpoints/
 __pycache__/
+.pytest_cache/
 data.sqlite
 
 # Secrets / local config — must stay out of git

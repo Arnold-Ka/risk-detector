@@ -35,12 +35,12 @@ Git repo initialized, **first commit still pending**. No CI.
 | Run API | `uv run uvicorn app.api.main:app --reload` → `GET /health` |
 | Smoke API w/o server | `uv run python -c "from fastapi.testclient import TestClient; from app.api.main import app; print(TestClient(app).get('/health').json())"` |
 | Nightly job (stub) | `uv run python -m app.jobs.nightly` — always `-m`, else `app.*` imports fail |
-| Tests | `uv run pytest` — **`tests/` does not exist yet** → collects 0, exit code 5 (not a failure of the code) |
+| Tests | `uv run pytest` (4 tests) · one file: `uv run pytest tests/test_api.py -v` · one test: `uv run pytest "tests/test_api.py::test_health_returns_ok"` |
 
 ## Current state — do not mistake for working code
 
-- Implemented (stubs): `app/api/main.py` (`/health` works, `/companies/{cik}` returns 501), `app/config.py`, `app/db/repo.py`, `app/edgar/client.py` (rate-limit + User-Agent only, no cache yet), `app/signals/altman.py` (**always returns None** — formula TODO), `app/jobs/nightly.py` (prints a TODO), `app/jobs/poll_8k.py` (docstring only).
-- Missing: `frontend/`, `tests/`, `app/signals/` (piotroski/beneish/divergence/runway/composite), real EDGAR download, `app/db/` `__init__` files exist but no repository functions beyond `get_conn()`.
+- Implemented (stubs): `app/api/main.py` (`/health` works, `/companies/{cik}` returns 501), `app/config.py`, `app/db/repo.py`, `app/edgar/client.py` (rate-limit + User-Agent only, no cache yet), `app/signals/altman.py` (**always returns None** — formula TODO), `app/jobs/nightly.py` (prints a TODO), `app/jobs/poll_8k.py` (docstring only). Tests exist: `tests/test_altman.py`, `tests/test_api.py` (pytest needs `pythonpath = ["."]` in pyproject — do not remove).
+- Missing: `frontend/`, `app/signals/` (piotroski/beneish/divergence/runway/composite), real EDGAR download, `app/db/` `__init__` files exist but no repository functions beyond `get_conn()`.
 - `app/db/schema.sql` is **live** (7 tables applied by docker-entrypoint-initdb.d). Editing it requires `docker compose down -v` to replay.
 - `main.py` (root) is an empty leftover; `data.sqlite` is a 0-byte scratch file — planned DB is **PostgreSQL, not SQLite**.
 - `data-script.sql` is an invalid historical draft (wrong DROP DATABASE syntax, `gen_ramdom_uuid` typo). Superseded by `app/db/schema.sql`; never execute it.
