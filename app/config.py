@@ -4,8 +4,7 @@
   1. les variables d'environnement réelles (shell, CI, etc.)
   2. les valeurs lues depuis le fichier `.env` nommé dans `model_config`
      — pydantic-settings v2 ne lit PAS `.env` tant que ce n'est pas déclaré
-     explicitement ci-dessous (un ValidationError « Field required » à
-     l'import signale que cette config ou le fichier `.env` manque)
+     explicitement ci-dessous
   3. les valeurs par défaut déclarées ci-dessous.
 
 Correspondance des noms (insensible à la casse) :
@@ -13,12 +12,19 @@ Correspondance des noms (insensible à la casse) :
 
 IMPORTANT : `settings = Settings()` s'exécute au moment de l'IMPORT. Si
 `.env` est absent et que les variables ne sont pas exportées, chaque module
-faisant `from app.config import settings` PLANTE avec une ValidationError
-pydantic. C'est volontaire : échouer vite au démarrage plutôt que de
-découvrir le problème à la première requête SEC. `.env` doit exister
-(copier `.env.example`).
+faisant `from app.config import settings` PLANTE avec une ValidationError —
+ma message personnalisé, grâce au model_validator ci-dessous. C'est
+volontaire : échouer vite au démarrage plutôt que de découvrir le problème
+à la première requête SEC. `.env` doit exister (copier `.env.example`).
+
+NOTE ANALYSE STATIQUE : les champs ont des défauts vides (`= ""`) pour que
+Pylance/PyRight considère `Settings()` comme un appel valide (pydantic
+remplit tout depuis `.env` à l'exécution, ce qu'un analyseur statique ne
+sait pas modéliser). Le contrôle « la variable est bien là » est délégué au
+model_validator — l'échec rapide est conservé.
 """
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,15 +46,39 @@ class Settings(BaseSettings):
     # DSN utilisé par app/db/repo.py, ex. postgresql://risk:risk@localhost:5435/risks
     # Port 5435 : docker-compose publie 5435 (5432 est pris par un autre
     # conteneur local fa_pg_sql).
-    database_url: str
+    # Défaut vide pour l'analyse statique ; le contrôle réel est dans
+    # _check_required_env ci-dessous.
+    database_url: str = ""
 
     # REQUIS par les conditions d'accès à la SEC EDGAR : « nom + e-mail »
     # dans le User-Agent, sinon les requêtes sont bloquées. Renseigner une
     # adresse réelle dans `.env` avant la phase 0.
-    sec_user_agent: str
+    # Défaut vide pour l'analyse statique ; le contrôle réel est dans
+    # _check_required_env ci-dessous.
+    sec_user_agent: str = ""
 
     # Où les réponses EDGAR brutes sont mises en cache sur disque (gitignoré).
     cache_dir: str = "data/cache"
+
+    @model_validator(mode="after")
+    def _check_required_env(self) -> "Settings":
+        """Échec explicite au démarrage si une variable manque dans .env.
+
+        Remplace les champs « required » de pydantic : même protection
+        (ValidationError à l'import), mais message actionnable en français,
+        et des paramètres optionnels pour Pylance/PyRight.
+        """
+        if not self.database_url:
+            raise ValueError(
+                "DATABASE_URL manquant — copier .env.example vers .env "
+                "et renseigner la chaîne de connexion PostgreSQL"
+            )
+        if not self.sec_user_agent:
+            raise ValueError(
+                "SEC_USER_AGENT manquant — la SEC exige nom + e-mail "
+                "réels dans le User-Agent (voir .env.example)"
+            )
+        return self
 
 
 # Instance unique au niveau module : une seule source de vérité pour toute
