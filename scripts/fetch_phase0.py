@@ -39,8 +39,10 @@ from app.edgar.client import EdgarClient
 COMPANIES = [
     {"slug": "apple_healthy", "label": "Apple (saine)", "ticker": "AAPL"},
     {"slug": "amc_distressed", "label": "AMC Entertainment (en difficulté)", "ticker": "AMC"},
-    {"slug": "enron_bankrupt", "label": "Enron (faillie)", "search": "enron"},
-    # Candidat de remplacement si Enron s'avère sans XBRL (cf. main()).
+    # Enron écarté par décision du 2026-10-12 : dépôts pré-XBRL (1997-2001),
+    # l'API companyfacts renvoie 404 — aucune donnée structurée exploitable.
+    # BBBY a le même profil (faillie 2023, dernier exercice désastreux)
+    # mais 16 ans de données XBRL.
     {"slug": "bbby_bankrupt", "label": "Bed Bath & Beyond (faillie 2023)", "search": "bed+bath"},
 ]
 
