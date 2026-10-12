@@ -53,6 +53,9 @@ COMPANIES = [
 # correspondance XBRL de la phase 1 (app/normalize/xbrl_map.yaml).
 CONCEPTS = {
     "total_assets": ["Assets"],
+    # Dette book totale = dénominateur du ratio D du Z d'Altman
+    # (valeur de marché des capitaux propres / dettes totales book).
+    "total_liabilities": ["Liabilities"],
     "current_assets": ["AssetsCurrent"],
     "current_liabilities": ["LiabilitiesCurrent"],
     "retained_earnings": ["RetainedEarningsAccumulatedDeficit", "RetainedEarnings"],
@@ -64,10 +67,26 @@ CONCEPTS = {
         "RevenueFromContractWithCustomerExcludingAssessedTax",
         "RevenueFromContractWithCustomerIncludingAssessedTax",
         "SalesRevenueNet",
+        # BBBY (avant ASC 606) : le CA est taggé SalesRevenueGoodsNet,
+        # présent dans aucune des variantes ci-dessus — sans lui, E=0 et le
+        # Z serait faussé à la baisse sur les exercices anciens.
+        "SalesRevenueGoodsNet",
     ],
 }
 # Parts en circulation : namespace "dei" (pas "us-gaap") dans companyfacts.
 SHARES_CONCEPTS = ["EntityCommonStockSharesOutstanding"]
+# Repli si EntityCommonStockSharesOutstanding est absent : ce fait est
+# DIMENSIONNEL par classe d'actions chez les émetteurs multi-classes (AMC) —
+# companyfacts exclut les faits dimensionnels => tag invisible.
+# Les parts pondérées moyennes de l'état des résultats restent exploitables,
+# avec l'écart documenté (colonne source_D côté prix).
+CONCEPTS["shares_weighted_basic"] = ["WeightedAverageNumberOfSharesOutstandingBasic"]
+
+# Flottant de marché (valeur des titres détenus par des non-initiés, mesurée
+# à la date de couverture du 10-K) : fait dei NON dimensionnel, toujours
+# présent — la source de repli de la colonne D quand il n'y a pas de cours
+# (titres delistés : BBBY après faillite, aucun service de cours gratuit).
+CONCEPTS_FLOAT = ["EntityPublicFloat"]
 
 CACHE_DIR = Path("data/cache")
 OUT_DIR = Path("data/phase0")
@@ -185,6 +204,10 @@ def build_rows(cik: int, facts: dict) -> tuple[list[dict], dict[int, dict], list
                 rows.append(
                     {
                         "year": year,
+                        # Date de fin de période EXACTE du fait (bilan au…,
+                        # exercice se terminant au…) — nécessaire pour
+                        # aligner ensuite le cours de bourse sur cette date.
+                        "period_end": v["end"],
                         "concept": key,
                         "value": v["val"],
                         "accession": accn,
@@ -195,7 +218,10 @@ def build_rows(cik: int, facts: dict) -> tuple[list[dict], dict[int, dict], list
                 per_year.setdefault(year, {})[key] = v["val"]
 
     harvest("us-gaap", CONCEPTS)
-    harvest("dei", {"shares_outstanding": SHARES_CONCEPTS})
+    harvest(
+        "dei",
+        {"shares_outstanding": SHARES_CONCEPTS, "public_float": CONCEPTS_FLOAT},
+    )
     return rows, per_year, notes + [f"manquant: {m}" for m in missing]
 
 
@@ -206,7 +232,7 @@ def write_outputs(slug: str, rows: list[dict], per_year: dict[int, dict]) -> Pat
     facts_file = OUT_DIR / f"{slug}_facts.csv"
     with facts_file.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(
-            f, fieldnames=["year", "concept", "value", "accession", "filed", "url"]
+            f, fieldnames=["year", "period_end", "concept", "value", "accession", "filed", "url"]
         )
         w.writeheader()
         w.writerows(sorted(rows, key=lambda r: (r["year"], r["concept"])))
@@ -217,7 +243,7 @@ def write_outputs(slug: str, rows: list[dict], per_year: dict[int, dict]) -> Pat
         # D (valeur boursière / dettes) exige un cours de bourse : aucune
         # source choisie en phase 0 => colonne laissée vide, pas de fausse valeur.
         # « year » = année de la date de fin de période (voir annual_values).
-        w.writerow(["year", "A=FR/actif", "B=RE/actif", "C=EBIT/actif", "E=CA/actif", "D=cours", "Z (à calculer à la main)"])
+        w.writerow(["year", "A=FR/actif", "B=RE/actif", "C=EBIT/actif", "E=CA/actif", "D=VK/dettes", "Z (à calculer à la main)"])
         for fy in sorted(per_year):
             y = per_year[fy]
             ta = y.get("total_assets")
@@ -259,9 +285,10 @@ def main() -> None:
         print(f"  sorties: {out} + ratios.csv")
 
     print(
-        "\nRappel phase 0 : le Z-score reste À CALCULER À LA MAIN dans le tableur "
-        "(colonne vide duu ratios.csv). D = valeur boursière : il faut d'abord "
-        "choisir une source de cours (semaine 1)."
+        "\nRappel phase 0 : la colonne Z reste À CALCULER À LA MAIN dans le "
+        "tableur (gate du projet). Les colonnes de valorisation (D) sont "
+        "renseignées par scripts.fetch_prices — à relancer APRÈS ce script "
+        "(fetch_phase0 régénère ratios.csv à zéro)."
     )
 
 
