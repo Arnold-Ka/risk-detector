@@ -32,61 +32,35 @@ from pathlib import Path
 import httpx
 
 from app.edgar.client import EdgarClient
+# Extraction DÉLÉGUÉE au chargeur produit : la phase 0 ne fait plus que
+# du formatage. Une seule implémentation des règles de sélection
+# (fenêtre de durée, priorité de tags, vote de millésime) vivant dans
+# app/normalize/loader.py — c'est le même code qui remplit PostgreSQL.
+from app.normalize.loader import extract, load_map
 
 # --- Les 3 entreprises de la phase 0 (choix validé) -------------------------
 # « saine » = actuelle et profitable ; « en difficulté » = cotée, très
 # endettée, mais vivante ; « faillie » = 8-K item 1.03 classique.
 COMPANIES = [
-    {"slug": "apple_healthy", "label": "Apple (saine)", "ticker": "AAPL"},
-    {"slug": "amc_distressed", "label": "AMC Entertainment (en difficulté)", "ticker": "AMC"},
+    # CIK verrouillés par la décision du 2026-10-12 : le CIK étant stable
+    # (identifiant permanent SEC), on le fixe ici plutôt que de re-le
+    # résoudre à chaque run — le ticker peut être retiré de la fenêtre
+    # cotée (BBBY delisté, ticker recyclé depuis 2026), pas le CIK.
+    {"slug": "apple_healthy", "label": "Apple (saine)", "ticker": "AAPL", "cik": 320193},
+    {"slug": "amc_distressed", "label": "AMC Entertainment (en difficulté)", "ticker": "AMC", "cik": 1411579},
     # Enron écarté par décision du 2026-10-12 : dépôts pré-XBRL (1997-2001),
     # l'API companyfacts renvoie 404 — aucune donnée structurée exploitable.
     # BBBY a le même profil (faillie 2023, dernier exercice désastreux)
-    # mais 16 ans de données XBRL.
-    {"slug": "bbby_bankrupt", "label": "Bed Bath & Beyond (faillie 2023)", "search": "bed+bath"},
+    # mais 16 ans de données XBRL. Pas de ticker : delisté depuis 2023.
+    # "name" force le libellé : entityName SEC = entité post-redressement
+    # (« 20230930-DK-BUTTERFLY-1 ») alors que les dépôts analysés sont ceux
+    # de l'entité d'origine.
+    {"slug": "bbby_bankrupt", "label": "Bed Bath & Beyond (faillie 2023)", "search": "bed+bath", "cik": 886158, "name": "Bed Bath & Beyond, Inc."},
 ]
 
-# --- Concepts XBRL recherchés, avec leurs variantes ------------------------
-# Les entreprises n'utilisent pas toujours le même tag (feuille de route §3,
-# « limites connues ») : on essaie les variantes dans l'ordre et on note
-# laquelle a marché — ce relevé sert directement à construire la table de
-# correspondance XBRL de la phase 1 (app/normalize/xbrl_map.yaml).
-CONCEPTS = {
-    "total_assets": ["Assets"],
-    # Dette book totale = dénominateur du ratio D du Z d'Altman
-    # (valeur de marché des capitaux propres / dettes totales book).
-    "total_liabilities": ["Liabilities"],
-    "current_assets": ["AssetsCurrent"],
-    "current_liabilities": ["LiabilitiesCurrent"],
-    "retained_earnings": ["RetainedEarningsAccumulatedDeficit", "RetainedEarnings"],
-    # EBIT pur n'existe presque jamais en XBRL : OperatingIncomeLoss est
-    # l'approximation standard (à documenter dans la doc du signal Altman).
-    "ebit_proxy": ["OperatingIncomeLoss"],
-    "sales": [
-        "Revenues",
-        "RevenueFromContractWithCustomerExcludingAssessedTax",
-        "RevenueFromContractWithCustomerIncludingAssessedTax",
-        "SalesRevenueNet",
-        # BBBY (avant ASC 606) : le CA est taggé SalesRevenueGoodsNet,
-        # présent dans aucune des variantes ci-dessus — sans lui, E=0 et le
-        # Z serait faussé à la baisse sur les exercices anciens.
-        "SalesRevenueGoodsNet",
-    ],
-}
-# Parts en circulation : namespace "dei" (pas "us-gaap") dans companyfacts.
-SHARES_CONCEPTS = ["EntityCommonStockSharesOutstanding"]
-# Repli si EntityCommonStockSharesOutstanding est absent : ce fait est
-# DIMENSIONNEL par classe d'actions chez les émetteurs multi-classes (AMC) —
-# companyfacts exclut les faits dimensionnels => tag invisible.
-# Les parts pondérées moyennes de l'état des résultats restent exploitables,
-# avec l'écart documenté (colonne source_D côté prix).
-CONCEPTS["shares_weighted_basic"] = ["WeightedAverageNumberOfSharesOutstandingBasic"]
-
-# Flottant de marché (valeur des titres détenus par des non-initiés, mesurée
-# à la date de couverture du 10-K) : fait dei NON dimensionnel, toujours
-# présent — la source de repli de la colonne D quand il n'y a pas de cours
-# (titres delistés : BBBY après faillite, aucun service de cours gratuit).
-CONCEPTS_FLOAT = ["EntityPublicFloat"]
+# Les concepts XBRL (tags, priorités, durée/instant) vivent MAINTENANT
+# dans app/normalize/xbrl_map.yaml (table de correspondance phase 1),
+# lus par app.normalize.loader.load_map — plus de liste parallèle ici.
 
 CACHE_DIR = Path("data/cache")
 OUT_DIR = Path("data/phase0")
@@ -100,7 +74,15 @@ FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
 
 
 def resolve_cik(client: EdgarClient, company: dict) -> int:
-    """Résout le CIK : par ticker (fichier officiel) ou par nom (recherche)."""
+    """Résout le CIK : valeur verrouillée > ticker (fichier officiel) > nom.
+
+    - `cik` figé dans COMPANIES : aucune requête réseau, zéro dépendance à
+      la disponibilité de company_tickers.json (BBBY en a disparu) ;
+    - sinon ticker (fichier officiel, CIK canonique) ;
+    - sinon recherche atom par nom (résolution dynamique).
+    """
+    if "cik" in company:
+        return int(company["cik"])
     if "ticker" in company:
         data = json.loads(client.get(TICKERS_URL))
         for row in data.values():
@@ -125,7 +107,10 @@ def load_facts(client: EdgarClient, cik: int, refresh: bool) -> dict:
     if cache_file.exists() and not refresh:
         return json.loads(cache_file.read_text(encoding="utf-8"))
     try:
-        payload = client.get(FACTS_URL.format(cik=cik))
+        # cached=False : ce fichier a DÉJÀ son propre cache ci-dessus ;
+        # le cache du client (data/cache/edgar/) ferait une COPIE inutile
+        # de plusieurs Mo du même companyfacts.
+        payload = client.get(FACTS_URL.format(cik=cik), cached=False)
     except httpx.HTTPStatusError as exc:
         # 404 = cet émetteur n'a AUCUN fait XBRL : dépôts d'avant ~2009
         # (Enron) ou API sans couverture. Ce n'est pas une erreur réseau :
@@ -137,91 +122,51 @@ def load_facts(client: EdgarClient, cik: int, refresh: bool) -> dict:
     return json.loads(payload)
 
 
-def annual_values(concept_json: dict) -> dict[int, dict]:
-    """Extrait les valeurs ANNUELLES (10-K, fp=FY) d'un concept.
+def build_rows(cik: int, companyfacts: dict) -> tuple[list[dict], dict[int, dict], list[str]]:
+    """companyfacts -> lignes longues sourcées + valeurs par année + notes.
 
-    Clé = année de la date `end` du fait (ET non le champ `fy`) :
-      - un solde (instant) rapporté en colonne comparative porte le `fy` de
-        L'AUTRE exercice (ex. BBBY, exercice 2022 finissant le 2023-02-25) ;
-      - en cas de correction de dépôt (« restated »), on garde le dépôt le
-        plus récent (filed max) — c'est la valeur que l'outil affichera.
-    Attention conséquence (phase 0) : pour un émetteur à exercice décalé
-    (BBBY finit en février), l'année affichée = année de la date de fin,
-    pas le « fiscal year » du libellé. Incohérents affichés = incohérents
-    comparables, et tous les postes d'une même ligne partagent la même
-    règle.
-    """
-    best: dict[int, dict] = {}
-    for unit_values in concept_json.get("units", {}).values():
-        for v in unit_values:
-            if v.get("form") != "10-K" or v.get("fp") != "FY":
-                continue
-            end = v.get("end")
-            if not end:
-                continue
-            year = int(end[:4])
-            if year not in best or v.get("filed", "") > best[year].get("filed", ""):
-                best[year] = v
-    return best
-
-
-def build_rows(cik: int, facts: dict) -> tuple[list[dict], dict[int, dict], list[str]]:
-    """Construit les lignes longues + les valeurs par année + relevé de variantes.
-
-    Variantes par ANNÉE (et non « un tag gagne pour toujours ») : un même
-    concept change de tag au fil du temps (ASC 606 en 2018, dépendances de
-    tags hérités…). Chaque variante vient combler les années qu'elle couvre,
-    l'ordre de la liste = ordre de priorité. C'est exactement le relevé qui
-    alimentera la table de correspondance XBRL de la phase 1.
+    L'extraction est intégralement déléguée à `app.normalize.loader.extract`
+    (voir ses règles : 10-K/FY, fenêtre de durée, priorité de tags, vote
+    de millésime). Ce formatage ajoute :
+      - l'URL cliquable du dépôt (traçabilité principe nº1) ;
+      - l'année clé = année de la date de fin (convention « exercice »
+        reprise par ratios.csv et fetch_prices) ;
+      - `per_year[année][concept]` écrasé par les dates successives :
+        extract trie par date croissante, donc la date de fin la PLUS
+        TARDIVE de l'année gagne (ex. AMC : comparatif au 2018-01-01
+        puis vrai solde au 2018-12-31 → le solde l'emporte).
     """
     rows: list[dict] = []
     per_year: dict[int, dict] = {}
-    notes: list[str] = []
-    missing: list[str] = []
+    tags_used: dict[str, set[str]] = {}
 
-    def harvest(namespace: str, concepts: dict[str, list[str]], key_map=None):
-        for key, variants in concepts.items():
-            merged: dict[int, dict] = {}
-            used_tags: set[str] = set()
-            for tag in variants:
-                node = facts.get(namespace, {}).get(tag)
-                if not node:
-                    continue
-                for year, v in annual_values(node).items():
-                    if year not in merged:  # variante prioritaire gagne
-                        merged[year] = v
-                        used_tags.add(tag)
-            if not merged:
-                missing.append(key)
-                continue
-            notes.append(f"{key} <- {sorted(used_tags)}")
-            for year, v in merged.items():
-                accn = v["accn"]
-                url = (
+    for fact in extract(companyfacts):
+        accn = fact["accn"]
+        year = int(fact["period_end"][:4])
+        rows.append(
+            {
+                "year": year,
+                # Date de fin de période EXACTE du fait (bilan au…,
+                # exercice se terminant au…) — nécessaire pour
+                # aligner ensuite le cours de bourse sur cette date.
+                "period_end": fact["period_end"],
+                "concept": fact["concept"],
+                "value": fact["value"],
+                "accession": accn,
+                "filed": fact["filed"],
+                "url": (
                     f"https://www.sec.gov/Archives/edgar/data/{cik}/"
                     f"{accn.replace('-', '')}/{accn}-index.htm"
-                )
-                rows.append(
-                    {
-                        "year": year,
-                        # Date de fin de période EXACTE du fait (bilan au…,
-                        # exercice se terminant au…) — nécessaire pour
-                        # aligner ensuite le cours de bourse sur cette date.
-                        "period_end": v["end"],
-                        "concept": key,
-                        "value": v["val"],
-                        "accession": accn,
-                        "filed": v.get("filed", ""),
-                        "url": url,
-                    }
-                )
-                per_year.setdefault(year, {})[key] = v["val"]
+                ),
+            }
+        )
+        per_year.setdefault(year, {})[fact["concept"]] = fact["value"]
+        tags_used.setdefault(fact["concept"], set()).add(fact["tag"])
 
-    harvest("us-gaap", CONCEPTS)
-    harvest(
-        "dei",
-        {"shares_outstanding": SHARES_CONCEPTS, "public_float": CONCEPTS_FLOAT},
-    )
+    # Relevé de variantes (imprimé dans main) + concepts absents de ce
+    # dépôt — la table YAML étant la source de vérité, on la référence.
+    missing = sorted(set(load_map()) - set(tags_used))
+    notes = [f"{k} <- {sorted(v)}" for k, v in sorted(tags_used.items())]
     return rows, per_year, notes + [f"manquant: {m}" for m in missing]
 
 
@@ -242,7 +187,10 @@ def write_outputs(slug: str, rows: list[dict], per_year: dict[int, dict]) -> Pat
         w = csv.writer(f)
         # D (valeur boursière / dettes) exige un cours de bourse : aucune
         # source choisie en phase 0 => colonne laissée vide, pas de fausse valeur.
-        # « year » = année de la date de fin de période (voir annual_values).
+        # « year » = année de la date de fin de période (voir build_rows).
+        # EBIT : clé loader `operating_income` (OperatingIncomeLoss — l'EBIT
+        # pur n'existe presque jamais en XBRL, approximation standard à
+        # documenter dans la doc du signal Altman).
         w.writerow(["year", "A=FR/actif", "B=RE/actif", "C=EBIT/actif", "E=CA/actif", "D=VK/dettes", "Z (à calculer à la main)"])
         for fy in sorted(per_year):
             y = per_year[fy]
@@ -252,7 +200,7 @@ def write_outputs(slug: str, rows: list[dict], per_year: dict[int, dict]) -> Pat
             wc = y.get("current_assets", 0) - y.get("current_liabilities", 0)
             a = wc / ta
             b = y.get("retained_earnings", 0) / ta
-            c = y.get("ebit_proxy", 0) / ta
+            c = y.get("operating_income", 0) / ta
             e = y.get("sales", 0) / ta
             w.writerow([fy, f"{a:.4f}", f"{b:.4f}", f"{c:.4f}", f"{e:.4f}", "", ""])
     return facts_file
@@ -276,12 +224,12 @@ def main() -> None:
             print("     -> entreprise à remplacer dans le trio de la phase 0")
             continue
 
-        rows, per_year, notes = build_rows(cik, facts["facts"])
+        rows, per_year, notes = build_rows(cik, facts)
         out = write_outputs(company["slug"], rows, per_year)
         years = sorted(per_year)
         print(f"  années fiscales: {years[0]}–{years[-1]} ({len(years)} ans)" if years else "  aucune année")
         print(f"  variantes retenues: {', '.join(n for n in notes if not n.startswith('manquant')) or '—'}")
-        print(f"  manques: {', '.join(n[8:] for n in notes if n.startswith('manquant')) or '—'}")
+        print(f"  manques: {', '.join(n.removeprefix('manquant: ') for n in notes if n.startswith('manquant')) or '—'}")
         print(f"  sorties: {out} + ratios.csv")
 
     print(

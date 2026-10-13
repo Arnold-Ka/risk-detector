@@ -1,0 +1,167 @@
+# Table de correspondance XBRL -> indicateurs standard (phase 1, §6 semaines 3-4)
+#
+# CONCEPT : un même indicateur peut porter plusieurs tags au fil du temps
+# (changement d'ASC, héritage des dépendances) — `tags` est classé par
+# priorité ; le chargeur (app/normalize/loader.py) fusionne les années
+# couvertes par chaque variante. La phase 0 a fourni les cas concrets :
+#   - le CA d'Apple chevauche 3 tags (Revenues / RevenueFromContract… /
+#     SalesRevenueNet) selon les exercices ;
+#   - BBBY avant ASC 606 utilise SalesRevenueGoodsNet ;
+#   - les parts de couverture d'un émetteur multi-classes (AMC) sont
+#     DIMENSIONNELLES et absentes de companyfacts : repli sur les parts
+#     pondérées (shares_weighted_*), jamais sur une valeur inventée.
+#
+# kind :
+#   - "instant"   = solde au dernier jour de la période (bilan) ;
+#   - "duration"  = cumul sur TOUTE l'exercice (CP) — le chargeur exige une
+#                   durée ~annuelle pour écarter les sous-périodes et les
+#                   synthèses pluriannuelles de l'Item 6.
+# namespace : "us-gaap" par défaut, "dei" pour les faits de couverture.
+#
+# Chaque indicateur porte son libellé français : c'est lui qui sera affiché
+# sur la fiche de risque (langage simple), le tag reste l'identifiant DB.
+#
+# AMPLITUDE : ce fichier couvre les entrées des signaux MVP (§4 de la
+# feuille de route) — Altman (A-E), Piotroski (F1-F9), Beneish (M),
+# écart bénéfice/trésorerie, runway de trésorerie. L'ajout d'un signal
+# = d'abord une ligne ici, jamais un hardcode dans le calculateur.
+
+concepts:
+
+  # --- Bilan : Altman A/B/D, Piotroski F5-F6, Beneish AQI/LVGI -----------
+  total_assets:
+    label: Actif total
+    kind: instant
+    tags: [Assets]
+
+  total_liabilities:
+    label: Dettes totales (book)
+    kind: instant
+    tags: [Liabilities]
+
+  current_assets:
+    label: Actifs circulants
+    kind: instant
+    tags: [AssetsCurrent]
+
+  current_liabilities:
+    label: Passifs circulants
+    kind: instant
+    tags: [LiabilitiesCurrent]
+
+  cash:
+    label: Trésorerie et équivalents
+    kind: instant
+    tags: [CashAndCashEquivalentsAtCarryingValue]
+
+  receivables:
+    label: Créances clients
+    kind: instant
+    tags:
+      - AccountsReceivableNetCurrent
+      - ReceivablesNetCurrent
+      - ReceivablesNet
+      # BBBY (détail) : AUCUNE tag receivables standard dans companyfacts —
+      # sa ligne « receivables » du bilan est taguée créances cartes
+      # (encaissements par carte = sa créance réelle, délai ~3 jours).
+      # Repli vérifié manuellement le 2026-10-12, pas une correspondance
+      # approximative : c'est le poste que l'émetteur présente comme recevable.
+      - CreditAndDebitCardReceivablesAtCarryingValue
+
+  inventory:
+    label: Stocks
+    kind: instant
+    tags: [InventoryNet]
+
+  stockholders_equity:
+    label: Capitaux propres
+    kind: instant
+    tags: [StockholdersEquity]
+
+  long_term_debt:
+    label: Dette long terme
+    kind: instant
+    tags: [LongTermDebtNoncurrent, LongTermDebt]
+
+  retained_earnings:
+    label: Bénéfices non répartis
+    kind: instant
+    tags: [RetainedEarningsAccumulatedDeficit, RetainedEarnings]
+
+  # Beneish (AQI, DEPI) : le M-score a besoin des immobilisations nettes.
+  # Absent du MVP initial, ajouté le 2026-10-12 avec le moteur de signaux.
+  ppe:
+    label: Immobilisations corporelles nettes
+    kind: instant
+    tags: [PropertyPlantAndEquipmentNet]
+
+  # --- Faits de couverture (namespace dei) --------------------------------
+  shares_outstanding:
+    label: Parts en circulation
+    kind: instant
+    namespace: dei
+    tags: [EntityCommonStockSharesOutstanding]
+
+  public_float:
+    label: Flottant de marché
+    kind: instant
+    namespace: dei
+    tags: [EntityPublicFloat]
+
+  # --- Compte de résultat : Altman C/E, Piotroski F1/F3/F8/F9, Beneish ----
+  sales:
+    label: Chiffre d'affaires
+    kind: duration
+    tags:
+      - Revenues
+      - RevenueFromContractWithCustomerExcludingAssessedTax
+      - RevenueFromContractWithCustomerIncludingAssessedTax
+      - SalesRevenueNet
+      - SalesRevenueGoodsNet   # BBBY avant ASC 606 (phase 0)
+
+  operating_income:
+    label: Résultat d'exploitation (proxy EBIT)
+    kind: duration
+    tags: [OperatingIncomeLoss]
+
+  net_income:
+    label: Résultat net
+    kind: duration
+    tags: [NetIncomeLoss, ProfitLoss]
+
+  gross_profit:
+    label: Résultat brut
+    kind: duration
+    tags: [GrossProfit]
+
+  sga:
+    label: Frais de vente, généraux et administratifs
+    kind: duration
+    tags: [SellingGeneralAndAdministrativeExpense]
+
+  interest_expense:
+    label: Charges d'intérêts
+    kind: duration
+    tags: [InterestExpense, InterestExpenseNonoperating]
+
+  # --- Trésorerie : écart bénéfice/cash, runway, Beneish TATA -------------
+  cfo:
+    label: Flux de trésorerie d'exploitation
+    kind: duration
+    tags: [NetCashProvidedByUsedInOperatingActivities, NetCashProvidedByUsedInOperatingActivitiesContinuingOperations]
+
+  depreciation:
+    label: Amortissements et dotations
+    kind: duration
+    tags: [DepreciationDepletionAndAmortization, DepreciationAmortizationAndAccretionNet, Depreciation]
+
+  # --- Dilution (Piotroski F7) : repli documenté sur les parts pondérées --
+  shares_weighted_basic:
+    label: Parts pondérées moyennes (basique)
+    kind: duration
+    tags: [WeightedAverageNumberOfSharesOutstandingBasic]
+
+  shares_weighted_diluted:
+    label: Parts pondérées moyennes (dilué)
+    kind: duration
+    tags: [WeightedAverageNumberOfDilutedSharesOutstanding]

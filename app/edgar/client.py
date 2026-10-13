@@ -7,13 +7,17 @@ Règles de la SEC qu'il faut RESPECTER (feuille de route §3) :
   - mettre les réponses en cache plutôt que de re-interroger EDGAR à
     chaque visite d'utilisateur.
 
-Ce module implémente le rate limit + le User-Agent. Le cache fichier
-(settings.cache_dir) et les téléchargements massifs en ZIP sont des TODO
-de la phase 1.
+Ce module implémente le rate limit, le User-Agent et le cache fichier
+(`settings.cache_dir/edgar/`, écriture atomique, seules les 2xx sont
+mises en cache). Les téléchargements massifs en ZIP restent un TODO de
+la phase 1.
 """
 
+import hashlib
+import re
 import time
 import unicodedata
+from pathlib import Path
 
 import httpx
 
@@ -51,13 +55,35 @@ class EdgarClient:
             #             rester bloqué pour toujours
         )
 
-    def get(self, url: str) -> bytes:
+    def _cache_path(self, url: str) -> Path:
+        """Chemin de cache pour `url` : lisible (slug) + anti-collision (hash).
+
+        Ex. `data/cache/edgar/https_data_sec_gov_api_xbrl_companyfacts_CIK0000…_a1b2c3d4e5f6.json`
+        — le slug rend le dossier humainement navigable, les 12 caractères
+        de hash (SHA-1 de l'URL complète) évitent les collisions quand le
+        slug est tronqué à 80 caractères.
+        """
+        slug = re.sub(r"[^A-Za-z0-9]+", "_", url).strip("_")[:80]
+        digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
+        ext = ".json" if ".json" in url else ".bin"
+        return Path(settings.cache_dir) / "edgar" / f"{slug}_{digest}{ext}"
+
+    def get(self, url: str, *, cached: bool = True) -> bytes:
         """GET `url` en respectant le budget de 10 req/s, renvoie les octets.
 
         Synchrone volontairement : les téléchargements massifs tournent dans
         jobs/nightly.py, où une simple boucle avec sleep est plus facile à
         raisonner qu'un asyncio.
+
+        `cached=True` (défaut) met la réponse sur disque et la relit au
+        prochain lancement : règle SEC « mettre en cache plutôt que de
+        re-interroger EDGAR ». Seules les réponses 2xx sont écrites (un
+        403/404 ne doit jamais rester en cache — voir plus bas).
         """
+        cache_file = self._cache_path(url) if cached else None
+        if cache_file is not None and cache_file.exists():
+            return cache_file.read_bytes()
+
         # Combien de l'écart de 0.1 s reste-t-il depuis la dernière requête ?
         wait = MIN_INTERVAL - (time.monotonic() - self._last)
         if wait > 0:
@@ -74,7 +100,13 @@ class EdgarClient:
         # données.
         resp = self._http.get(url)
         resp.raise_for_status()
-        return resp.content
 
-# TODO(phase 1) : cache fichier indexé par URL sous settings.cache_dir pour
-# qu'un redémarrage de job (ou un second passage) ne re-touche pas EDGAR.
+        if cache_file is not None:
+            # Écriture atomique (tmp puis rename) : un plantage en cours
+            # d'écriture ne doit pas laisser un fichier JSON tronqué qui
+            # ferait échouer les lectures suivantes.
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache_file.with_suffix(cache_file.suffix + ".tmp")
+            tmp.write_bytes(resp.content)
+            tmp.replace(cache_file)
+        return resp.content
