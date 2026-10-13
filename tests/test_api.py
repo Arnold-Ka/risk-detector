@@ -81,6 +81,12 @@ def test_company_card_returns_latest_signals():
         assert signal["severity"]
         assert len(signal["period_end"]) == 10
         assert "details" in signal
+        # Lien source (feuille de route §9) : tout signal tracé a son URL ;
+        # le composite dérive d'autres signaux et n'a pas de dépôt propre.
+        if signal["signal_type"] == "composite":
+            assert signal["filing_url"] is None
+        else:
+            assert signal["filing_url"] and signal["filing_url"].startswith("http")
 
 
 def test_signals_history_is_ordered():

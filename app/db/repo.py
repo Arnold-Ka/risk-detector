@@ -214,17 +214,20 @@ def latest_signals(conn, company_id: str) -> list[dict]:
     """Dernier signal de chaque type (la fiche de risque « aujourd'hui »).
 
     DISTINCT ON = idiom Postgres : une ligne par signal_type, celle du
-    period_end le plus récent.
+    period_end le plus récent. LEFT JOIN filings : chaque score doit
+    pouvoir pointer vers son dépôt source (feuille de route §9 — lien
+    vers chaque dépôt source ; composite sans filing_id -> url NULL).
     """
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT DISTINCT ON (signal_type)
-                   signal_type, period_end, value, severity, details,
-                   computed_at, filing_id
-            FROM signals
-            WHERE company_id = %s
-            ORDER BY signal_type, period_end DESC
+            SELECT DISTINCT ON (s.signal_type)
+                   s.signal_type, s.period_end, s.value, s.severity,
+                   s.details, s.computed_at, s.filing_id, f.url
+            FROM signals s
+            LEFT JOIN filings f ON f.id = s.filing_id
+            WHERE s.company_id = %s
+            ORDER BY s.signal_type, s.period_end DESC
             """,
             (company_id,),
         )
@@ -236,11 +239,12 @@ def signal_history(conn, company_id: str) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT signal_type, period_end, value, severity, details,
-                   computed_at, filing_id
-            FROM signals
-            WHERE company_id = %s
-            ORDER BY period_end, signal_type
+            SELECT s.signal_type, s.period_end, s.value, s.severity,
+                   s.details, s.computed_at, s.filing_id, f.url
+            FROM signals s
+            LEFT JOIN filings f ON f.id = s.filing_id
+            WHERE s.company_id = %s
+            ORDER BY s.period_end, s.signal_type
             """,
             (company_id,),
         )
@@ -248,11 +252,15 @@ def signal_history(conn, company_id: str) -> list[dict]:
 
 
 def _signal_dict(row) -> dict:
-    """Ligne signals -> dict JSON (details jsonb arrive déjà décodé).
+    """Ligne signals + url du dépôt -> dict JSON (details jsonb décodé).
 
-    Les deux requêtes (latest/history) retournent les mêmes 7 colonnes.
+    Les deux requêtes (latest/history) retournent les mêmes 8 colonnes ;
+    filing_url est NULL pour le composite (qui dérive d'autres signaux).
     """
-    signal_type, period_end, value, severity, details, computed_at, filing_id = row
+    (
+        signal_type, period_end, value, severity,
+        details, computed_at, filing_id, filing_url,
+    ) = row
     return {
         "signal_type": signal_type,
         "period_end": period_end.isoformat(),
@@ -261,6 +269,7 @@ def _signal_dict(row) -> dict:
         "details": details,
         "computed_at": computed_at.isoformat(),
         "filing_id": str(filing_id) if filing_id else None,
+        "filing_url": filing_url,
     }
 
 

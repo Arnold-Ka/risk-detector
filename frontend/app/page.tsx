@@ -49,13 +49,14 @@ export default function Home() {
         </button>
       </form>
 
-      {/* Liens de démonstration : CIK réels connus (Apple, Tesla, Enron=faillite
-          historique utile pour les tests futurs du backtest). */}
+      {/* Liens de démonstration : le trio de validation de la phase 0
+          (Apple saine / AMC en difficulté / BBBY faillie 2023) — seules
+          entreprises ingérées en base pour l'instant. */}
       <ul className="mt-6 flex flex-wrap gap-3 text-sm">
         {[
           { cik: "320193", label: "Apple" },
-          { cik: "1318605", label: "Tesla" },
-          { cik: "1045810", label: "Nvidia" },
+          { cik: "1411579", label: "AMC" },
+          { cik: "886158", label: "Bed Bath & Beyond" },
         ].map((co) => (
           <li key={co.cik}>
             <a
