@@ -44,6 +44,37 @@ def test_health_returns_ok():
     assert resp.json() == {"status": "ok"}
 
 
+def test_search_by_name_ticker_and_cik():
+    """Recherche §9 : nom partiel, symbole, CIK exact (skip sans base)."""
+    import pytest
+
+    if not _db_available():
+        pytest.skip("PostgreSQL indisponible")
+    if not client.get("/search", params={"q": "a"}).json():
+        pytest.skip("données non ingérées — uv run python -m scripts.load_postgres")
+    names = [r["name"] for r in client.get("/search", params={"q": "apple"}).json()]
+    assert any("Apple" in n for n in names)
+
+    # Par symbole boursier
+    ciks = [r["cik"] for r in client.get("/search", params={"q": "aapl"}).json()]
+    assert 320193 in ciks
+
+    # Par CIK numérique exact
+    ciks = [r["cik"] for r in client.get("/search", params={"q": "886158"}).json()]
+    assert ciks == [886158]
+
+    # Résultat vide explicite (pas d'erreur) + niveau composite éventuel
+    resp = client.get("/search", params={"q": "zzzz-inexistant"})
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_search_requires_non_empty_query():
+    """q absent ou vide -> 422 (validation), pas une liste qui paraîtrait « tout »."""
+    assert client.get("/search").status_code == 422
+    assert client.get("/search", params={"q": "   "}).json() == []
+
+
 def test_company_unknown_cik_returns_404():
     """CIK inconnu -> 404 (pas un objet vide qui ressemblerait à « sain »)."""
     if not _db_available():

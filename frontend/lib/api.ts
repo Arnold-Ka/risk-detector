@@ -85,3 +85,42 @@ export async function fetchCompany(cik: number): Promise<CompanyResult> {
     };
   }
 }
+
+// Ligne de suggestion de recherche (GET /search) : identité + niveau
+// composite le plus récent (null = entreprise non encore scorée — jamais
+// de niveau inventé).
+export type SearchResult = {
+  cik: number;
+  name: string;
+  ticker: string | null;
+  sector_group: string | null;
+  level: Level | null;
+};
+
+// Résultat de recherche : « ready » avec une liste éventuellement vide
+// (pas de résultat = réponse légitime, pas une erreur).
+export type SearchState =
+  | { state: "ready"; results: SearchResult[] }
+  | { state: "error"; message: string };
+
+export async function searchCompanies(query: string): Promise<SearchState> {
+  try {
+    const res = await fetch(
+      `${BASE}/search?q=${encodeURIComponent(query)}`,
+    );
+    if (!res.ok) {
+      return {
+        state: "error",
+        message: `L'API a répondu ${res.status} pour la recherche.`,
+      };
+    }
+    return { state: "ready", results: (await res.json()) as SearchResult[] };
+  } catch {
+    return {
+      state: "error",
+      message:
+        "Impossible de joindre l'API. " +
+        "Lancez le backend : uv run uvicorn app.api.main:app --reload",
+    };
+  }
+}

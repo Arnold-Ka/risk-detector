@@ -12,9 +12,15 @@ Règles respectées ici :
     entreprise sans risque).
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
-from app.db.repo import get_company, get_conn, latest_signals, signal_history
+from app.db.repo import (
+    get_company,
+    get_conn,
+    latest_signals,
+    search_companies,
+    signal_history,
+)
 
 # `title` apparaît dans la documentation auto-générée (/docs et /redoc) —
 # utile pour tester les endpoints à la main tant que le frontend n'existe pas.
@@ -32,6 +38,25 @@ def health():
     du service db).
     """
     return {"status": "ok"}
+
+
+@app.get("/search")
+def search(q: str = Query(min_length=1, max_length=100)):
+    """Recherche d'entreprise par nom, symbole boursier ou CIK.
+
+    Feuille de route §9 (site minimal) : « recherche par nom ou symbole ».
+    Retourne une liste (possibly vide) — jamais d'erreur pour « pas de
+    résultat », c'est une réponse légitime. Le niveau composite éventuel
+    est inclus pour afficher le risque dans les suggestions.
+    """
+    query = q.strip()
+    if not query:
+        return []  # que des espaces : pas de résultat, pas d'erreur
+    conn = get_conn()
+    try:
+        return search_companies(conn, query)
+    finally:
+        conn.close()
 
 
 @app.get("/companies/{cik}")

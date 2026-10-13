@@ -173,6 +173,53 @@ def get_company(conn, cik: int) -> dict | None:
         return dict(zip(cols, row))
 
 
+def search_companies(conn, query: str, limit: int = 10) -> list[dict]:
+    """Recherche par nom, symbole ou CIK (feuille de route §9).
+
+    - nom/ticker : ILIKE partiel, jokers % et _ de l'utilisateur échappés
+      (sinon une requête « _ » listerait tout) ;
+    - si la requête ne contient que des chiffres, c'est un CIK : comparaison
+      exacte en plus (un CIK ne fait « parti » de rien) ;
+    - `level` = dernier score composite connu (niveau global) pour afficher
+      le risque directement dans les résultats de recherche ; NULL si
+      l'entreprise n'a pas encore été scorée (jamais de niveau inventé).
+    """
+    # Jokers ILIKE de l'entrée utilisateur échappés AVANT d'ajouter les
+    # nôtres (échappés après, on neutraliserait nos propres % — bug déjà
+    # commis : la recherche rendait toujours vide). Backslash = escape par
+    # défaut sous PostgreSQL.
+    safe = (
+        query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    pattern = f"%{safe}%"
+    params: list = [pattern, pattern]
+    if query.isdigit():
+        where = "(c.name ILIKE %s OR c.ticker ILIKE %s OR c.cik = %s)"
+        params.append(int(query))
+    else:
+        where = "(c.name ILIKE %s OR c.ticker ILIKE %s)"
+    params.append(limit)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT c.cik, c.name, c.ticker, c.sector_group, s.severity
+            FROM companies c
+            LEFT JOIN LATERAL (
+                SELECT sg.severity FROM signals sg
+                WHERE sg.company_id = c.id AND sg.signal_type = 'composite'
+                ORDER BY sg.period_end DESC LIMIT 1
+            ) s ON true
+            WHERE {where}
+            ORDER BY c.name
+            LIMIT %s
+            """,
+            params,
+        )
+        cols = ("cik", "name", "ticker", "sector_group", "level")
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
 def fetch_fact_rows(conn, company_id: str) -> list[dict]:
     """Tous les faits normalisés d'une entreprise, triés par date de fin.
 
