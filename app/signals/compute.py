@@ -1,0 +1,223 @@
+"""Orchestration : série d'indicateurs normalisés -> signaux d'une entreprise.
+
+Ce module est le seul à savoir COMMENT les modules `app.signals.*` sont
+appelés sur une série d'exercices. Il est pur (aucune BDD, aucun réseau) :
+le job nocturne lui passe des lignes de la table `facts`, les tests lui
+passent directement la sortie de `app.normalize.loader.extract`.
+
+Entrées :
+  rows   : [{concept, value, period_end, fiscal_year?, filing_id?}] —
+           les lignes de `facts` (ou du chargeur) ;
+  prices : [(date ISO, cours)] — table `prices` (les cours retenus pour D).
+
+Réglages de valorisation : la logique de capitalisation reproduit À L'IDENTIQUE
+scripts/fetch_prices.py (source_D) pour que Z(phase 0) et Z(nightly) disent
+la même chose :
+  a) cours ≤ date de bilan (à 14 j près — c'est la « date_valeur » stockée)
+     × parts de couverture (dei) ;
+  b) sinon dernier flottant SEC ≤ date de bilan (dans les 12 mois) ;
+  c) sinon cours × parts pondérées moyennes ;
+  d) sinon capitalisation absente -> Altman non calculable (None).
+
+Convention d'année : année CALENDAIRE de la date de fin de période
+(identique à la colonne `year` de la phase 0 et à facts.fiscal_year) ;
+plusieurs dates de fin dans une même année (AMC 2018) => la date la plus
+tardive gagne (tri croissant + écrasement), exactement comme la phase 0.
+"""
+
+from datetime import date
+
+from app.signals import altman, beneish, composite, divergence, piotroski, runway
+from app.signals.common import SignalResult
+
+# Cours utilisable s'il est à moins de 14 jours du bilan (week-end/férié
+# derrière : la date_valeur de fetch_prices est le dernier cours ≤ bilan).
+PRICE_MAX_AGE_DAYS = 14
+# Flottant SEC utilisable s'il date de moins de 12 mois (mesuré ~6 mois
+# avant le bilan pour un exercice civil ; ~0 mois pour décalé).
+FLOAT_MAX_AGE_DAYS = 365
+
+
+def build_years(rows: list[dict]) -> dict[int, dict[str, dict]]:
+    """Lignes de faits -> {année: {concept: node}}, date la plus tardive gagne."""
+    years: dict[int, dict[str, dict]] = {}
+    for row in sorted(rows, key=lambda r: r["period_end"]):
+        year = int(row["period_end"][:4])
+        node = {
+            "value": row["value"],
+            "period_end": row["period_end"],
+            # facts.filing_id (uuid) côté BDD ; les tests passent l'accn.
+            "filing_id": row.get("filing_id") or row.get("accn"),
+        }
+        years.setdefault(year, {})[row["concept"]] = node
+    return years
+
+
+def _v(year_node: dict, concept: str):
+    """Valeur d'un concept pour l'exercice, ou None si absent."""
+    node = year_node.get(concept)
+    return node["value"] if node else None
+
+
+def _meta(year_node: dict) -> tuple[str | None, str | None]:
+    """Ancre (period_end, filing_id) de l'exercice.
+
+    Préférence : le bilan (total_assets) ; sinon le résultat, la trésorerie
+    ou le CA — un exercice sans aucun de ces postes n'a pas de signal du
+    tout (le parcours de compute_company saute l'année).
+    """
+    for anchor in ("total_assets", "net_income", "cash", "sales"):
+        node = year_node.get(anchor)
+        if node:
+            return node["period_end"], node.get("filing_id")
+    return None, None
+
+
+def _price_on_or_before(prices: list[tuple[str, float]], balance_date: str) -> float | None:
+    """Dernier cours ≤ date de bilan et d'au plus PRICE_MAX_AGE_DAYS jours.
+
+    La table `prices` ne contient que les cours retenus par fetch_prices
+    (une ligne par exercice valorisé) : pour un exercice passé par le repli
+    « flottant_sec », aucun cours n'est stocké — on retombe donc
+    naturellement sur l'étape (b), comme le script de phase 0.
+    """
+    bd = date.fromisoformat(balance_date)
+    best: float | None = None
+    for d, close in prices:
+        dd = date.fromisoformat(d)
+        if dd > bd:
+            break  # tri croissant : plus rien d'utilisable ensuite
+        if (bd - dd).days <= PRICE_MAX_AGE_DAYS:
+            best = close
+    return best
+
+
+def _latest_float(floats: list[tuple[str, float]], balance_date: str) -> float | None:
+    """Dernier flottant SEC ≤ date de bilan, d'au plus 12 mois."""
+    bd = date.fromisoformat(balance_date)
+    best: float | None = None
+    for d, value in floats:
+        dd = date.fromisoformat(d)
+        if dd > bd:
+            break
+        if (bd - dd).days <= FLOAT_MAX_AGE_DAYS:
+            best = value
+    return best
+
+
+def market_capitalisation(
+    cur: dict,
+    floats: list[tuple[str, float]],
+    prices: list[tuple[str, float]],
+) -> tuple[float | None, str | None]:
+    """(capitalisation, source) pour l'exercice — miroir de fetch_prices.
+
+    Retourne (None, None) quand aucune source ne s'applique : Altman sera
+    alors non calculable, jamais valorisé avec un chiffre inventé.
+    """
+    ta = cur.get("total_assets")
+    if not ta:
+        return None, None
+    balance_date = ta["period_end"]
+
+    price = _price_on_or_before(prices, balance_date)
+    dei = _v(cur, "shares_outstanding")
+    wavg = _v(cur, "shares_weighted_basic")
+
+    if price and dei:
+        return price * dei, "yahoo+dei"
+    flottant = _latest_float(floats, balance_date)
+    if flottant is not None:
+        return flottant, "flottant_sec"
+    if price and wavg:
+        return price * wavg, "yahoo+parts_ponderees"
+    return None, None
+
+
+def compute_company(rows: list[dict], prices: list[tuple[str, float]]) -> list[SignalResult]:
+    """Tous les signaux quantitatifs de tous les exercices d'une entreprise.
+
+    Chaque SignalResult porte period_end + filing_id (traçabilité) ;
+    None renvoyé par un module = signal absent pour l'exercice (jamais de
+    valeur de substitution). Le composite est dérivé des sévérités de
+    l'exercice une fois ses composants calculés.
+    """
+    years = build_years(rows)
+    if not years:
+        return []
+
+    # Flottants à plat, triés : reprise du « dernier flottant ≤ bilan ».
+    floats = sorted(
+        (node["period_end"], node["value"])
+        for year_node in years.values()
+        for concept, node in year_node.items()
+        if concept == "public_float"
+    )
+    prices = sorted(prices)
+
+    # L'écart bénéfice/cash a besoin de l'historique complet (streak) :
+    # il reçoit directement les nœuds (value, period_end, filing_id).
+    divergences = divergence.evaluate_history(years)
+
+    results: list[SignalResult] = []
+    for year in sorted(years):
+        cur = years[year]
+        period_end, filing_id = _meta(cur)
+        if period_end is None:
+            continue
+        cur_v = {c: n["value"] for c, n in cur.items()}
+
+        year_results: list[SignalResult] = []
+
+        # --- Altman ---------------------------------------------------------
+        cap, cap_source = market_capitalisation(cur, floats, prices)
+        ca, cl = _v(cur, "current_assets"), _v(cur, "current_liabilities")
+        wc = (ca - cl) if (ca is not None and cl is not None) else None
+        res = altman.evaluate(
+            working_capital=wc,
+            total_assets=_v(cur, "total_assets"),
+            retained_earnings=_v(cur, "retained_earnings"),
+            ebit=_v(cur, "operating_income"),
+            market_capitalisation=cap,
+            total_liabilities=_v(cur, "total_liabilities"),
+            sales=_v(cur, "sales"),
+            period_end=period_end,
+            filing_id=filing_id,
+        )
+        if res:
+            # Traçabilité du D : capitalisation + provenance du calcul,
+            # pour que l'affichage montre d'où vient la composante boursière
+            # (pas un dépôt SEC, mais un cours — cf. source dans details).
+            res.details["market_capitalisation"] = cap
+            res.details["cap_source"] = cap_source
+            year_results.append(res)
+
+        # --- Piotroski + Beneish (nécessitent l'exercice précédent) --------
+        prev = years.get(year - 1)
+        if prev:
+            prev_v = {c: n["value"] for c, n in prev.items()}
+            res = piotroski.evaluate(prev_v, cur_v, period_end, filing_id)
+            if res:
+                year_results.append(res)
+            res = beneish.evaluate(prev_v, cur_v, period_end, filing_id)
+            if res:
+                year_results.append(res)
+
+        # --- Runway ---------------------------------------------------------
+        res = runway.evaluate(_v(cur, "cash"), _v(cur, "cfo"), period_end, filing_id)
+        if res:
+            year_results.append(res)
+
+        # --- Écart bénéfice/cash (streak sur plusieurs exercices) ----------
+        if year in divergences:
+            year_results.append(divergences[year])
+
+        # --- Composite : niveau global de l'exercice ------------------------
+        severities = {r.signal_type: r.severity for r in year_results}
+        compo = composite.evaluate(severities, period_end)
+        if compo:
+            year_results.append(compo)
+
+        results.extend(year_results)
+
+    return results

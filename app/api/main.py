@@ -3,9 +3,18 @@
 Périmètre (feuille de route §4) : API JSON uniquement. Les pages sont
 rendues par le frontend Next.js (`frontend/`), qui appelle ces endpoints.
 Le backend ne rend jamais de HTML lui-même.
+
+Règles respectées ici :
+  - l'API ne CALCULE rien : elle lit les signaux pré-calculés par le job
+    nocturne (app/jobs/nightly.py) — « pré-calculer plutôt que calculer à
+    la demande » (§4) ;
+  - réponse 404 sur CIK inconnu (pas d'objet vide qui ressemblerait à une
+    entreprise sans risque).
 """
 
 from fastapi import FastAPI, HTTPException
+
+from app.db.repo import get_company, get_conn, latest_signals, signal_history
 
 # `title` apparaît dans la documentation auto-générée (/docs et /redoc) —
 # utile pour tester les endpoints à la main tant que le frontend n'existe pas.
@@ -26,17 +35,34 @@ def health():
 
 
 @app.get("/companies/{cik}")
-def get_company(cik: int):
+def get_company_card(cik: int):
     """Fiche de risque d'une entreprise, identifiée par son CIK SEC.
 
-    501 = « implémenté plus tard, volontairement ». On renvoie une erreur
-    explicite plutôt qu'un objet vide car la règle produit est : afficher les
-    données manquantes comme manquantes, jamais une fausse réponse
-    (feuille de route §3 « donnée manquante »). À implémenter en phase 1,
-    quand `companies` et `signals` seront peuplées.
+    Retourne l'identité + le dernier signal de chaque type (la lecture
+    « aujourd'hui » de la fiche). L'historique complet est sur
+    /companies/{cik}/signals.
 
-    Note : un `def` simple (pas `async def`) suffit ici — FastAPI exécute les
-    endpoints synchrones dans une threadpool, et les appels BDD en phase 1
-    seront du psycopg bloquant : l'async n'apporterait rien.
+    Note : un `def` simple (pas `async def`) suffit — FastAPI exécute les
+    endpoints synchrones dans une threadpool et psycopg est bloquant.
     """
-    raise HTTPException(status_code=501, detail="Not Implemented - Phase 1")
+    conn = get_conn()
+    try:
+        company = get_company(conn, cik)
+        if company is None:
+            raise HTTPException(status_code=404, detail=f"CIK {cik} inconnu")
+        return {**company, "signals": latest_signals(conn, company["id"])}
+    finally:
+        conn.close()
+
+
+@app.get("/companies/{cik}/signals")
+def get_company_signals(cik: int):
+    """Historique complet des signaux (graphiques d'évolution, backtest)."""
+    conn = get_conn()
+    try:
+        company = get_company(conn, cik)
+        if company is None:
+            raise HTTPException(status_code=404, detail=f"CIK {cik} inconnu")
+        return {"cik": cik, "signals": signal_history(conn, company["id"])}
+    finally:
+        conn.close()
