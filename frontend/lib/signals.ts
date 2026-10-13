@@ -13,6 +13,8 @@ export const SIGNAL_ORDER: SignalType[] = [
   "beneish",
   "divergence",
   "runway",
+  "late_filing",
+  "critical_8k",
 ];
 
 export const SIGNAL_LABELS: Record<SignalType, string> = {
@@ -22,6 +24,8 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   beneish: "Beneish M",
   divergence: "Écart bénéfice/cash",
   runway: "Autonomie de trésorerie",
+  late_filing: "Dépôts en retard",
+  critical_8k: "8-K critiques",
 };
 
 // Courte explication en langage simple (feuille de route §9 :
@@ -38,6 +42,10 @@ export const SIGNAL_HINTS: Record<SignalType, string> = {
     "Le bénéfice monte pendant que la trésorerie baisse : qualité des profits en doute.",
   runway:
     "Combien de mois de trésorerie au rythme actuel de consommation de cash.",
+  late_filing:
+    "Rapports trimestriels/annuels déposés après le délai (formulaires NT) — souvent un problème dans les comptes.",
+  critical_8k:
+    "Événements graves annoncés en 8-K : faillite, défaut de dette, comptes corrigés, changement d'auditeur, départ de dirigeant.",
 };
 
 /** Badge coloré par sévérité (signaux) ou niveau (composite). */
@@ -74,6 +82,10 @@ export function formatValue(type: SignalType, value: number | null): string {
       return `${Math.round(value)} mois`;
     case "divergence":
       return value === 0 ? "aucun" : `${Math.round(value)} exercice(s)`;
+    case "late_filing":
+      return value === 0 ? "aucun" : `${Math.round(value)} dépôt(s) tardif(s)`;
+    case "critical_8k":
+      return value === 0 ? "aucun" : `${Math.round(value)} 8-K critique(s)`;
     case "composite":
       return `indice ${value.toFixed(1)} / 2`;
   }

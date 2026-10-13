@@ -15,7 +15,16 @@ CREATE TABLE filings (
     accession text UNIQUE NOT NULL,
     form_type text NOT NULL,
     filed_at date NOT NULL,
-    url text NOT NULL
+    url text NOT NULL,
+    -- Événements (signaux du §2 « signaux d'événements ») :
+    -- items    = numéros d'items d'un 8-K ("1.03,2.04"), NULL ailleurs ;
+    -- report_date = date de la période/de l'événement signalée par la SEC
+    --              (sert à rattacher un NT 10-K tardif à l'exercice VRAIMENT
+    --              en retard — si l'on se limitait à filed_at, le retard
+    --              serait attribué à l'exercice suivant).
+    -- Source : API submissions (champs `items` et `reportDate`).
+    items text,
+    report_date date
 );
 
 CREATE TABLE facts (
@@ -37,7 +46,8 @@ CREATE TABLE facts (
 CREATE TABLE signals (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id uuid NOT NULL REFERENCES companies(id),
-    -- 'altman' | 'piotroski' | 'beneish' | 'divergence' | 'runway' | 'composite'
+    -- 'altman' | 'piotroski' | 'beneish' | 'divergence' | 'runway'
+    -- | 'late_filing' | 'critical_8k' | 'composite'
     signal_type text NOT NULL,
     -- Exercice auquel le score se rapporte (date de fin de période du
     -- bilan) — PAS la date de calcul : l'historique par exercice est ce

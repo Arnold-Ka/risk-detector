@@ -37,6 +37,10 @@ WEIGHTS: dict[str, float] = {
     "beneish": 1.0,
     "divergence": 1.0,
     "runway": 1.0,
+    # Signaux d'événements (§2) : même poids unitaire par défaut — le
+    # backtest dira si un 8-K de faillite mérite plus qu'un Z-score.
+    "late_filing": 1.0,
+    "critical_8k": 1.0,
 }
 
 # index de gravité par sévérité (texte affiché -> nombre).

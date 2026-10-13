@@ -29,6 +29,11 @@ from datetime import date
 
 from app.signals import altman, beneish, composite, divergence, piotroski, runway
 from app.signals.common import SignalResult
+from app.signals.events import (
+    assign_to_years,
+    evaluate_critical_8k,
+    evaluate_late_filing,
+)
 
 # Cours utilisable s'il est à moins de 14 jours du bilan (week-end/férié
 # derrière : la date_valeur de fetch_prices est le dernier cours ≤ bilan).
@@ -134,13 +139,24 @@ def market_capitalisation(
     return None, None
 
 
-def compute_company(rows: list[dict], prices: list[tuple[str, float]]) -> list[SignalResult]:
-    """Tous les signaux quantitatifs de tous les exercices d'une entreprise.
+def compute_company(
+    rows: list[dict],
+    prices: list[tuple[str, float]],
+    events: list[dict] | None = None,
+) -> list[SignalResult]:
+    """Tous les signaux de tous les exercices d'une entreprise.
 
     Chaque SignalResult porte period_end + filing_id (traçabilité) ;
     None renvoyé par un module = signal absent pour l'exercice (jamais de
     valeur de substitution). Le composite est dérivé des sévérités de
     l'exercice une fois ses composants calculés.
+
+    events : dépôts 8-K/NT (repo.fetch_event_rows / edgar.submissions).
+      - None  = événements non chargés (anciens appels, tests isolés) :
+        les signaux d'événements sont OMIS plutôt qu'affichés « 0 » (un
+        zéro affirme avoir vérifié — ce serait un faux score) ;
+      - []    = chargés, aucun événement : signaux « saine » émis pour la
+        continuité des courbes.
     """
     years = build_years(rows)
     if not years:
@@ -158,6 +174,15 @@ def compute_company(rows: list[dict], prices: list[tuple[str, float]]) -> list[S
     # L'écart bénéfice/cash a besoin de l'historique complet (streak) :
     # il reçoit directement les nœuds (value, period_end, filing_id).
     divergences = divergence.evaluate_history(years)
+
+    # Événements -> exercices : toutes les dates de bilan connues servent
+    # d'échelle de rattachement (report_date privilégié, cf. events.py).
+    events_by_year: dict[int, list[dict]] = {}
+    if events is not None:
+        all_period_ends = sorted(
+            {node["period_end"] for y in years.values() for node in y.values()}
+        )
+        events_by_year, _dropped = assign_to_years(events, all_period_ends)
 
     results: list[SignalResult] = []
     for year in sorted(years):
@@ -211,6 +236,18 @@ def compute_company(rows: list[dict], prices: list[tuple[str, float]]) -> list[S
         # --- Écart bénéfice/cash (streak sur plusieurs exercices) ----------
         if year in divergences:
             year_results.append(divergences[year])
+
+        # --- Événements (dépôts 8-K / NT, §2 signaux d'événements) --------
+        if events is not None:
+            year_events = events_by_year.get(year, [])
+            nt_rows = [e for e in year_events if e["form"].startswith("NT")]
+            k8_rows = [e for e in year_events if e["form"].startswith("8-K")]
+            year_results.append(
+                evaluate_late_filing(nt_rows, period_end, filing_id)
+            )
+            year_results.append(
+                evaluate_critical_8k(k8_rows, period_end, filing_id)
+            )
 
         # --- Composite : niveau global de l'exercice ------------------------
         severities = {r.signal_type: r.severity for r in year_results}

@@ -281,7 +281,11 @@ def test_composite_half_alerts_is_high():
     assert res is not None
     assert res.value == pytest.approx(1.0)
     assert res.severity == "élevé"
-    assert set(res.details["absent"]) == {"beneish", "divergence", "runway"}
+    # Absents = poids connus mais sévérité non fournie ce-là (composite
+    # pondère 7 signaux depuis l'ajout des événements).
+    assert set(res.details["absent"]) == {
+        "beneish", "divergence", "runway", "late_filing", "critical_8k",
+    }
 
 
 def test_composite_ignores_unknown_and_empty():

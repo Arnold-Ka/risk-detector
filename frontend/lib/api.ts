@@ -42,6 +42,8 @@ export type SignalType =
   | "beneish"
   | "divergence"
   | "runway"
+  | "late_filing"
+  | "critical_8k"
   | "composite";
 
 // Sévérités des signaux unitaires (mêmes libellés que le backend).

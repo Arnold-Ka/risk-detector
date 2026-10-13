@@ -35,6 +35,7 @@ from collections import Counter
 from datetime import date
 
 from app.db.repo import (
+    fetch_event_rows,
     fetch_fact_rows,
     fetch_price_rows,
     get_conn,
@@ -54,7 +55,10 @@ def main() -> None:
         for company in companies:
             rows = fetch_fact_rows(conn, company["id"])
             prices = fetch_price_rows(conn, company["id"])
-            results = compute_company(rows, prices)
+            # Dépôts 8-K/NT -> signaux d'événements (toujours une liste :
+            # on a vérifié, même vide, le « 0 » est donc vrai).
+            events = fetch_event_rows(conn, company["id"])
+            results = compute_company(rows, prices, events)
             payload = [r.to_row(company["id"], computed_at) for r in results]
             n = replace_company_signals(conn, company["id"], payload, computed_at)
 

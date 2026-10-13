@@ -69,24 +69,31 @@ def upsert_company(conn, cik: int, name: str, ticker: str | None = None,
 
 
 def upsert_filing(conn, company_id: str, accession: str, form_type: str,
-                  filed_at: str, url: str) -> str:
+                  filed_at: str, url: str, items: str | None = None,
+                  report_date: str | None = None) -> str:
     """Insère ou met à jour un dépôt, renvoie son id (uuid).
 
     Clé de conflit : `accession` (numéro d'inscription unique SEC).
     `filed_at` = date ISO 'YYYY-MM-DD' (castée par Postgres en date).
+    `items` / `report_date` : enrichissement événementiel (8-K, NT) venu
+    des submissions — COALESCE côté conflit pour ne pas écraser une valeur
+    déjà connue par un ré-ingest qui ne la fournit pas (10-K de facts).
     """
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO filings (company_id, accession, form_type, filed_at, url)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO filings
+                (company_id, accession, form_type, filed_at, url, items, report_date)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (accession) DO UPDATE SET
                 form_type = EXCLUDED.form_type,
                 filed_at = EXCLUDED.filed_at,
-                url = EXCLUDED.url
+                url = EXCLUDED.url,
+                items = COALESCE(EXCLUDED.items, filings.items),
+                report_date = COALESCE(EXCLUDED.report_date, filings.report_date)
             RETURNING id
             """,
-            (company_id, accession, form_type, filed_at, url),
+            (company_id, accession, form_type, filed_at, url, items, report_date),
         )
         return cur.fetchone()[0]
 
@@ -255,6 +262,42 @@ def fetch_price_rows(conn, company_id: str) -> list[tuple[str, float]]:
             (company_id,),
         )
         return [(r[0].isoformat(), float(r[1])) for r in cur.fetchall()]
+
+
+def fetch_event_rows(conn, company_id: str) -> list[dict]:
+    """Dépôts porteurs d'événements (8-K items + NT de retard), triés.
+
+    Alimente app.signals.events : un 8-K critique (items 1.03/2.04/4.01/
+    4.02/5.02) ou un NT 10-K/10-Q = signaux d'événements du §2. Chaque
+    ligne garde filing_id : tout score d'événement doit rester tracé jusqu'au
+    dépôt source.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            # %% = % littéral : psycopg3 parse les % de la requête quand des
+            # paramètres sont passés (LIKE '8-K%' devrait fuir sinon).
+            """
+            SELECT id, accession, form_type, filed_at, items, report_date
+            FROM filings
+            WHERE company_id = %s
+              AND (form_type LIKE '8-K%%' OR form_type LIKE 'NT%%')
+            ORDER BY filed_at
+            """,
+            (company_id,),
+        )
+        return [
+            {
+                "filing_id": str(r[0]),
+                "accession": r[1],
+                "form": r[2],
+                "filed_at": r[3].isoformat(),
+                "items": r[4],
+                # report_date peut être NULL (SEC facultatif) : le mapping
+                # vers l'exercice retombe sur filed_at.
+                "report_date": r[5].isoformat() if r[5] else None,
+            }
+            for r in cur.fetchall()
+        ]
 
 
 def latest_signals(conn, company_id: str) -> list[dict]:

@@ -34,12 +34,20 @@ from app.db.repo import (
     upsert_filing,
     upsert_prices,
 )
+from app.edgar.client import EdgarClient
+from app.edgar.submissions import load_filing_rows
 from app.normalize.loader import extract
 from scripts.fetch_phase0 import CACHE_DIR, COMPANIES, OUT_DIR
 
 # URL du dépôt dans EDGAR, dérivée de l'accession (mêmes nommage que la
 # phase 0 : chaque valeur exportée est cliquable jusqu'au document source).
 FILING_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/{accn}-index.htm"
+
+# Formulaires porteurs d'événements (§2) ingérés depuis submissions :
+# 8-K (+ amendements) pour leurs items, NT* pour les retards de dépôt.
+# Les autres formes (4, SC 13, DEF 14A…) ne servent aucun signal MVP
+# aujourd'hui — on élargira quand leurs signaux arriveront.
+EVENT_FORMS = ("8-K", "NT")
 
 
 def load_prices(conn, company_id: str, slug: str) -> int:
@@ -141,6 +149,34 @@ def main() -> None:
                         url=FILING_URL.format(cik=cik, accn=accn.replace("-", "")),
                     )
 
+            # 1 bis. Dépôts événementiels (8-K items, NT retard) : mêmes
+            # lignes submissions que scripts.fetch_submissions met en cache.
+            # Sans réseau si fetch_submissions a tourné ; sinon EdgarClient
+            # retélécharge poliment (10 req/s, cache) — et si le réseau est
+            # aussi coupé, on abandonne avec le rappel de la commande.
+            try:
+                event_filings = [
+                    fr for fr in load_filing_rows(EdgarClient(), cik)
+                    if fr["form"].startswith(EVENT_FORMS)
+                ]
+            except Exception as exc:
+                sys.exit(
+                    "Submissions indisponibles (cache absent + réseau en échec) : "
+                    "lancer d'abord uv run python -m scripts.fetch_submissions\n"
+                    + str(exc)
+                )
+            for fr in event_filings:
+                upsert_filing(
+                    conn,
+                    company_id,
+                    accession=fr["accession"],
+                    form_type=fr["form"],
+                    filed_at=fr["filed_at"],
+                    url=fr["url"],
+                    items=fr["items"],
+                    report_date=fr["report_date"],
+                )
+
             # 2. Puis les faits eux-mêmes.
             rows = [
                 {
@@ -164,7 +200,10 @@ def main() -> None:
             n_prices = load_prices(conn, company_id, slug)
             totals += n_facts
             purge_note = f", {n_purged} périmés purgés" if n_purged else ""
-            print(f"  {slug}: {n_facts} faits{purge_note}, {len(filing_ids)} dépôts, {n_prices} cours")
+            print(
+                f"  {slug}: {n_facts} faits{purge_note}, {len(filing_ids)} dépôts "
+                f"10-K + {len(event_filings)} événements, {n_prices} cours"
+            )
 
         conn.commit()  # transaction unique : tout ou rien (voir repo.get_conn)
         print(f"\nIngestion validée ({totals} faits).")
