@@ -124,3 +124,30 @@ export async function searchCompanies(query: string): Promise<SearchState> {
     };
   }
 }
+
+// Historique complet des signaux (GET /companies/{cik}/signals) — sert le
+// graphique d'évolution 5 ans de la fiche (feuille de route §9).
+export type HistoryResult =
+  | { state: "ready"; signals: Signal[] }
+  | { state: "error"; message: string };
+
+export async function fetchSignalHistory(cik: number): Promise<HistoryResult> {
+  try {
+    const res = await fetch(`${BASE}/companies/${cik}/signals`);
+    if (!res.ok) {
+      return {
+        state: "error",
+        message: `L'API a répondu ${res.status} pour l'historique du CIK ${cik}.`,
+      };
+    }
+    const body = (await res.json()) as { signals: Signal[] };
+    return { state: "ready", signals: body.signals };
+  } catch {
+    return {
+      state: "error",
+      message:
+        "Impossible de joindre l'API. " +
+        "Lancez le backend : uv run uvicorn app.api.main:app --reload",
+    };
+  }
+}

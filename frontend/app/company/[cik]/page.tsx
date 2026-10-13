@@ -17,7 +17,11 @@
 
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { fetchCompany, type CompanyResult, type Signal } from "@/lib/api";
+import {
+  fetchCompany,
+  fetchSignalHistory,
+  type Signal,
+} from "@/lib/api";
 import {
   SIGNAL_HINTS,
   SIGNAL_LABELS,
@@ -26,6 +30,7 @@ import {
   badgeClass,
   formatValue,
 } from "@/lib/signals";
+import ScoreChart from "./score-chart";
 
 // Titre dynamique pour le SEO : la page entreprise doit être indexable
 // (feuille de route §7 : pages publiques = trafic gratuit et durable).
@@ -58,7 +63,12 @@ async function CompanySection({
   params: PageProps<"/company/[cik]">["params"];
 }) {
   const { cik } = await params;
-  const result: CompanyResult = await fetchCompany(Number(cik));
+  // Parallèle : identité+signaux récents et historique complet sont deux
+  // endpoints indépendants — inutile de les chaîner.
+  const [result, history] = await Promise.all([
+    fetchCompany(Number(cik)),
+    fetchSignalHistory(Number(cik)),
+  ]);
 
   if (result.state === "error") {
     return (
@@ -180,6 +190,17 @@ async function CompanySection({
           </p>
         )}
       </div>
+
+      {/* Graphique d'évolution (feuille de route §9) : données complètes
+          de l'historique, rendu interactif côté client. */}
+      {history.state === "ready" && history.signals.length > 0 && (
+        <div className="rounded-xl border border-gray-200 p-6">
+          <h3 className="font-semibold">Évolution sur 5 ans</h3>
+          <div className="mt-3">
+            <ScoreChart signals={history.signals} />
+          </div>
+        </div>
+      )}
 
       {/* Avertissement légal (feuille de route §9) */}
       <p className="text-xs text-gray-500">
