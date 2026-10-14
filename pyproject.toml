@@ -15,6 +15,7 @@ dependencies = [
     "pytest>=9.1.1",              # lanceur de tests (tests/)
     "pyyaml>=6.0.3",              # futur app/normalize/xbrl_map.yaml
     "requests>=2.34.2",           # gardé pour les scripts synchrones simples ; préférer httpx dans app/
+    "torch>=2.14.1",
     "uvicorn[standard]>=0.54.0",  # serveur ASGI lançant app.api.main:app
 ]
 
@@ -29,3 +30,6 @@ dependencies = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cpu"

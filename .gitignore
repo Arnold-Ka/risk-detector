@@ -18,3 +18,5 @@ data/cache/
 # data/backtest/companies.json reste versionné, les exports ne le sont pas)
 data/backtest/*_facts.csv
 data/backtest/*_ratios.csv
+# Jeu de données DL (régénérable via scripts/export_dataset.py)
+data/backtest/dl_dataset.csv
