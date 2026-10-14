@@ -78,7 +78,14 @@ def load_manifest(path: Path) -> tuple[dict[int, date], set[int]]:
 
 
 def load_signal_rows(ciks: set[int]) -> dict[int, list[dict]]:
-    """Toutes les lignes signaux des ciks du manifeste, groupées par cik."""
+    """Lignes signaux CLASSIQUES des ciks du manifeste, groupées par cik.
+
+    `<> 'lstm'` : le backtest classique mesure les signaux classiques —
+    les lignes DL entreraient dans build_snapshots.def_types (règle
+    alternative « défaillance ») et fausseraient la comparaison. Le LSTM
+    a sa propre évaluation (scripts/train_lstm, seuil + disponibilité
+    dédiés).
+    """
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -90,6 +97,7 @@ def load_signal_rows(ciks: set[int]) -> dict[int, list[dict]]:
                 JOIN companies co ON co.id = s.company_id
                 LEFT JOIN filings f ON f.id = s.filing_id
                 WHERE co.cik = ANY(%s)
+                  AND s.signal_type <> 'lstm'
                 ORDER BY co.cik, s.period_end
                 """,
                 [sorted(ciks)],

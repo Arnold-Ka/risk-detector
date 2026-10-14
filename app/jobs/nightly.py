@@ -12,7 +12,9 @@ Pipeline (AUTONOME depuis la réfection de la phase 1) :
                     INCRÉMENTALE, seule la nouveauté est ingérée ;
     2. signals    — app/signals/compute sur les séries de `facts`,
                     purge + réinsertion par entreprise (replace_company_signals),
-                    chaque ligne avec period_end + filing_id (traçabilité).
+                    chaque ligne avec period_end + filing_id (traçabilité) ;
+                    + signal LSTM (phase 2, app/dl/infer) si l'artefact
+                    data/models/lstm.pt existe — ignoré sinon.
 
 Mode batch historique (amorçage du manifeste) : les scripts fetch_phase0
 → fetch_prices → fetch_submissions → load_postgres restent la voie du
@@ -56,6 +58,7 @@ from app.db.repo import (
     list_companies,
     replace_company_signals,
 )
+from app.dl import infer as dl_infer
 from app.edgar.client import EdgarClient
 from app.ingest.refresh import refresh_company
 from app.signals.compute import compute_company
@@ -81,6 +84,17 @@ def main(refresh: bool = True, limit: int | None = None) -> None:
         computed_at = date.today().isoformat()
         totals: Counter = Counter()
         n_errors = 0
+
+        # Signal deep learning (phase 2) : l'artefact est chargé UNE fois
+        # pour tout le lot (cache interne à app.dl.infer). Absent ou
+        # désynchronisé -> le job continue SANS inférence DL : le modèle
+        # est un bonus, pas un prérequis de la précalculation.
+        dl_bundle = dl_infer.load_artifact()
+        if dl_bundle is None:
+            print(
+                "Modèle LSTM absent ou désynchronisé — inférence DL ignorée "
+                "(uv run python -m scripts.train_lstm)"
+            )
 
         for company in companies:
             # Une transaction par entreprise : si le refresh ou le
@@ -115,6 +129,15 @@ def main(refresh: bool = True, limit: int | None = None) -> None:
                     else None
                 )
                 results = compute_company(rows, prices, events, insiders)
+                # Signaux LSTM : probabilité de faillite à 12 mois, un
+                # par exercice (fenêtre glissante) — AJOUTÉS aux signaux
+                # classiques, jamais pondérés par le composite (cf.
+                # app/dl/infer). [] = strict-None (< 3 exercices, non
+                # traçable…) : la fiche affichera « donnée manquante ».
+                if dl_bundle is not None:
+                    results.extend(
+                        dl_infer.infer_company(conn, company, dl_bundle)
+                    )
                 payload = [r.to_row(company["id"], computed_at) for r in results]
                 n = replace_company_signals(conn, company["id"], payload, computed_at)
                 conn.commit()  # commit PAR entreprise (reprise possible)

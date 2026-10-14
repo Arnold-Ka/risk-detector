@@ -45,6 +45,7 @@ export type SignalType =
   | "late_filing"
   | "critical_8k"
   | "insider_sales"
+  | "lstm"
   | "composite";
 
 // Sévérités des signaux unitaires (mêmes libellés que le backend).

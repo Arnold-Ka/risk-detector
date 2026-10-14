@@ -16,6 +16,7 @@ export const SIGNAL_ORDER: SignalType[] = [
   "late_filing",
   "critical_8k",
   "insider_sales",
+  "lstm",
 ];
 
 export const SIGNAL_LABELS: Record<SignalType, string> = {
@@ -28,6 +29,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   late_filing: "Dépôts en retard",
   critical_8k: "8-K critiques",
   insider_sales: "Ventes de dirigeants",
+  lstm: "Modèle séquentiel (LSTM)",
 };
 
 // Courte explication en langage simple (feuille de route §9 :
@@ -50,6 +52,8 @@ export const SIGNAL_HINTS: Record<SignalType, string> = {
     "Événements graves annoncés en 8-K : faillite, défaut de dette, comptes corrigés, changement d'auditeur, départ de dirigeant.",
   insider_sales:
     "Part des actions vendues par les dirigeants (officiers, administrateurs) sur un an. Au-dessus de 0,25 % du capital = vigilance, 1 % = défaillance.",
+  lstm:
+    "Probabilité de faillite dans les 12 mois estimée par un modèle d'apprentissage profond sur les 3 à 5 derniers exercices (ratios comptables et événements de dépôt).",
 };
 
 /** Badge coloré par sévérité (signaux) ou niveau (composite). */
@@ -95,6 +99,9 @@ export function formatValue(type: SignalType, value: number | null): string {
       return value === 0
         ? "aucune vente"
         : `${(value * 100).toFixed(2)} % du capital`;
+    case "lstm":
+      // Valeur = probabilité de faillite à 12 mois (0..1).
+      return `${(value * 100).toFixed(1)} %`;
     case "composite":
       return `indice ${value.toFixed(1)} / 2`;
   }

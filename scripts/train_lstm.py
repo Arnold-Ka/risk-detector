@@ -22,6 +22,11 @@ v2 (features événementielles) : le vecteur annuel inclut les dépôts
 le LSTM v1 ne voyait que les ratios et perdait sur la détection
 (55,6 % vs 78,3 % à 6 mois) faute de l'arme de critical_8k.
 
+Le run sauvegarde en fin d'exécution l'artefact de production
+(data/models/lstm.pt + lstm.meta.json) consommé par l'inférence
+nocturne (app/dl/infer.py) : sans ce fichier, le nightly ignore le
+signal LSTM.
+
 Usage : uv run python -m scripts.train_lstm
 """
 
@@ -30,7 +35,16 @@ import sys
 from datetime import date
 
 from app.backtest.metrics import add_months, build_snapshots, exceeds, pick_recent
-from app.dl.dataset import INPUT_DIM, Sample, build_samples, company_year_points
+from app.dl.dataset import (
+    HORIZON_DAYS,
+    INPUT_DIM,
+    MAX_YEARS,
+    MIN_YEARS,
+    Sample,
+    build_samples,
+    company_year_points,
+)
+from app.dl.infer import save_artifact
 from app.dl.model import auc_rank, predict, train_model
 from scripts.backtest import MANIFEST, load_manifest, load_signal_rows
 from scripts.export_dataset import load_event_rows, load_fact_rows
@@ -233,6 +247,25 @@ def main() -> int:
             f"{pct(h6, o6):>10}  ({t6} faillites, {o6} ex. temoins)"
         )
     print(f"sans etat LSTM (non detecte) : {dict(no_state)}")
+
+    # 6) Artefact de production : MEME modèle que l'évaluation ci-dessus,
+    # seuil et métriques figés dans le meta.json (auditable + reproductible)
+    # — c'est ce fichier qu'app/dl/infer.py chargera chaque nuit.
+    meta = {
+        "model": "lstm",
+        "trained_at": date.today().isoformat(),
+        "input_dim": INPUT_DIM,
+        "threshold": round(threshold, 6),
+        "val_auc": round(val_auc, 4),
+        "test_auc": round(test_auc, 4),
+        "min_years": MIN_YEARS,
+        "max_years": MAX_YEARS,
+        "horizon_days": HORIZON_DAYS,
+        "seed": 42,
+        "split": {"train": len(train), "val": len(val), "test": len(test)},
+    }
+    weights = save_artifact(model, meta)
+    print(f"\nArtefact enregistre : {weights} (+ meta.json) — inférence nocturne activee")
     return 0
 
 

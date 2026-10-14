@@ -20,3 +20,5 @@ data/backtest/*_facts.csv
 data/backtest/*_ratios.csv
 # Jeu de données DL (régénérable via scripts/export_dataset.py)
 data/backtest/dl_dataset.csv
+# Artefact du modèle séquentiel (régénérable via scripts/train_lstm.py)
+data/models/
