@@ -366,6 +366,56 @@ def has_form4_filings(conn, company_id: str) -> bool:
         return bool(cur.fetchone()[0])
 
 
+def fetch_accessions(conn, company_id: str) -> set[str]:
+    """Numéros d'inscription déjà en base pour cette entreprise.
+
+    Le job nocturne incrémental compare cette collection aux dépôts
+    récents EDGAR (page submissions `recent`) pour ne re-ingérer QUE ce
+    qui est nouveau — une passe complète à chaque nuit serait du gâchis
+    réseau pour 99,9 % de doublons.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT accession FROM filings WHERE company_id = %s", (company_id,))
+        return {row[0] for row in cur.fetchall()}
+
+
+def fetch_balance_dates(conn, company_id: str) -> list[str]:
+    """Dates de fin de période distinctes des faits (repères de valorisation).
+
+    Le refresh nocturne des cours cherche « dernier cours ≤ chaque date de
+    bilan » — ces dates viennent des faits eux-mêmes (pas du cache CSV),
+    donc la table `prices` se remplit toujours à la bonne hauteur.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT period_end FROM facts "
+            "WHERE company_id = %s ORDER BY period_end",
+            (company_id,),
+        )
+        return [row[0].isoformat() for row in cur.fetchall()]
+
+
+def latest_form_filed_at(conn, company_id: str, form_type: str) -> str | None:
+    """Date de dépôt la plus récente d'un type de formulaire, ou None.
+
+    Le refresh nocturne compare cette date à celle du dernier 10-K vu sur
+    la page recent EDGAR : plus récent = un nouveau 10-K est tombé →
+    re-télécharger companyfacts. Comparer les DATES (et non les
+    accessions) évite le faux positif des 10-K dont extract() ne produit
+    AUCUN fait (vintage perdant au vote, fenêtre de durée hors 300-400j) —
+    ils n'apparaissent jamais dans `filings`, et une comparaison par
+    accession les re-détecterait à chaque nuit.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT max(filed_at) FROM filings "
+            "WHERE company_id = %s AND form_type = %s",
+            (company_id, form_type),
+        )
+        row = cur.fetchone()[0]
+        return row.isoformat() if row else None
+
+
 def fetch_insider_rows(conn, company_id: str) -> list[dict]:
     """Transactions Form 4 d'une entreprise (alimente app.signals.insiders).
 

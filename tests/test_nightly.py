@@ -7,6 +7,10 @@ Contrat vérifié :
      les mêmes comptes (purge + réinsertion, cf. replace_company_signals) ;
   3. l'unicité (company_id, signal_type, period_end) tient.
 
+Le refresh EDGAR/Yahoo (fetch autonome) est DÉSACTIVÉ ici
+(refresh=False) : ces tests ne doivent pas dépendre du réseau. Les
+fonctions pures du refresh sont testées dans tests/test_refresh.py.
+
 Si la base est éteinte → skip. Commande :
     docker compose up -d --wait
     uv run python -m scripts.load_postgres   # une fois
@@ -64,7 +68,10 @@ def _snapshot() -> tuple[Counter, Counter, list[str]]:
 
 
 def test_nightly_fills_signals_and_is_idempotent():
-    nightly_main()  # 1ère exécution
+    # refresh=False : les tests ne doivent PAS frapper EDGAR/Yahoo — le
+    # refresh autonome est couvert par test_refresh.py (fonctions pures) ;
+    # ici on ne valide que le calcul des signaux sur les données en base.
+    nightly_main(refresh=False)  # 1ère exécution
     by_type1, by_sev1, types1 = _snapshot()
 
     if not types1:
@@ -79,7 +86,7 @@ def test_nightly_fills_signals_and_is_idempotent():
     # Sévérités strictement dans le vocabulaire produit.
     assert set(by_sev1) <= (SEVERITIES | LEVELS), set(by_sev1)
 
-    nightly_main()  # 2ème exécution : purge + réinsertion
+    nightly_main(refresh=False)  # 2ème exécution : purge + réinsertion
     by_type2, by_sev2, types2 = _snapshot()
     assert by_type1 == by_type2, "comptes différents après re-exécution"
     assert by_sev1 == by_sev2

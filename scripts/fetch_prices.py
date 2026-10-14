@@ -46,11 +46,13 @@ Lancement (depuis la racine) :
 """
 
 import csv
-import json
 import sys
-import time
+from pathlib import Path
 
-import httpx
+# Le moteur Yahoo (fetch_history, désajustement des splits) vit dans
+# app/edgar/yahoo.py — partagé avec le job nocturne (un seul moteur).
+# Ce script ne garde que le formatage CSV de la phase 0.
+from app.edgar.yahoo import daily_closes, fetch_history, raw_close, splits_after
 
 # Le moteur (liste d'entreprises + répertoire de sortie) est partagé avec
 # fetch_phase0 via resolve_run : trio + data/phase0/ par défaut, manifeste
@@ -61,102 +63,7 @@ from scripts.fetch_phase0 import CACHE_DIR, OUT_DIR, resolve_run
 # idempotent : on re-saute toujours à ces 7 colonnes avant d'ajouter les siennes.
 BASE_COLS = 7
 
-# 1995 : couvre tous les exercices du trio (Apple commence en 2007).
-PERIOD1 = 788918400  # 1995-01-01T00:00:00Z
-CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"  # Yahoo exige un UA navigateur
-
 ADDED_COLS = ["date_valeur", "cours", "capitalisation", "dettes_totales", "source_D"]
-
-
-def fetch_history(symbol: str, refresh: bool) -> dict | None:
-    """Historique quotidien complet + splits, avec cache fichier.
-
-    Retourne None si le symbole n'existe plus chez Yahoo (titre delisté
-    dont le ticker a été recyclé ou purgé) — pas d'erreur, repli flottant.
-    """
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file = CACHE_DIR / f"prices_{symbol}.json"
-    if cache_file.exists() and not refresh:
-        return json.loads(cache_file.read_text(encoding="utf-8"))
-    try:
-        resp = httpx.get(
-            CHART_URL.format(symbol=symbol),
-            params={
-                "period1": PERIOD1,
-                "period2": int(time.time()),
-                "interval": "1d",
-                "events": "split",  # événements de split pour le désajustement
-            },
-            headers={"User-Agent": USER_AGENT},
-            timeout=30,
-        )
-    except httpx.HTTPError as exc:
-        print(f"  ! réseau Yahoo, {symbol}: {exc}")
-        return None
-    if resp.status_code == 404:
-        return None  # symbole introuvable / purgé
-    if resp.status_code == 429 or resp.status_code >= 500:
-        # Rate-limit Yahoo / erreur serveur éphémère sur 800+ symboles :
-        # on signale et on passe (« donnée manquante » > faire tomber le lot).
-        print(f"  ! Yahoo {resp.status_code} pour {symbol} — prix ignoré")
-        return None
-    resp.raise_for_status()
-    payload = resp.json()
-    if not payload.get("chart", {}).get("result"):
-        return None
-    ts = payload["chart"]["result"][0].get("timestamp", [])
-    # Symbole recyclé : série très courte commençant récemment = ce n'est
-    # plus l'émetteur d'origine (BBBY est devenu une autre société chez
-    # Yahoo : 61 points depuis juillet 2026) → traiter comme indisponible.
-    if ts and len(ts) < 500 and ts[0] > time.time() - 3 * 365 * 86400:
-        return None
-    cache_file.write_text(json.dumps(payload), encoding="utf-8")
-    # Pollicité Yahoo : le SOMMEIL vit ICI (appel réseau réel) et non dans
-    # la boucle principale — un cache hit ne doit pas dormir 0,3 s × 875.
-    time.sleep(0.3)
-    return payload
-
-
-def daily_closes(payload: dict | None) -> list[tuple[str, float]]:
-    """Journalier [(date AAAA-MM-JC, cours ajusté)] — None exclu (jours fermés)."""
-    if payload is None:
-        return []
-    result = payload["chart"]["result"][0]
-    ts_list = result.get("timestamp", [])
-    closes = result["indicators"]["quote"][0]["close"]
-    out = []
-    for ts, close in zip(ts_list, closes):
-        if close is None:
-            continue
-        out.append((time.strftime("%Y-%m-%d", time.gmtime(ts)), close))
-    return out
-
-
-def splits_after(payload: dict | None) -> list[tuple[str, float]]:
-    """[(date du split, facteur num/dénominateur)] triés croissant.
-
-    Yahoo a déjà divisé les cours antérieurs par ce facteur ; pour
-    retrouver le cours BRUT de l'époque, on multiplie le cours ajusté par
-    le produit des facteurs des splits survenus APRÈS sa date.
-    """
-    if payload is None:
-        return []
-    result = payload["chart"]["result"][0]
-    events = result.get("events", {}).get("splits", {}) or {}
-    out = []
-    for ev in events.values():
-        factor = ev["numerator"] / ev["denominator"]
-        out.append((time.strftime("%Y-%m-%d", time.gmtime(ev["date"])), factor))
-    return sorted(out)
-
-
-def raw_close(date: str, adj_close: float, splits: list[tuple[str, float]]) -> float:
-    factor = 1.0
-    for split_date, ratio in splits:
-        if split_date > date:
-            factor *= ratio
-    return adj_close * factor
 
 
 def read_facts(slug: str, out_dir: Path) -> tuple[dict[int, dict[str, dict]], list[tuple[str, float]]]:
@@ -204,7 +111,7 @@ def process(company: dict, refresh: bool, out_dir: Path) -> None:
         # flottant SEC peut valoriser — payload None = repli (b).
         payload, closes, splits, dates = None, [], [], []
     else:
-        payload = fetch_history(symbol, refresh)
+        payload = fetch_history(symbol, CACHE_DIR, refresh=refresh)
         closes = daily_closes(payload)
         splits = splits_after(payload)
         dates = [d for d, _ in closes]

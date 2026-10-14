@@ -27,6 +27,10 @@ from app.config import settings
 # de 0.1 s.
 MIN_INTERVAL = 0.1
 
+# API companyfacts (faits XBRL de TOUS les exercices d'un émetteur, en un
+# seul JSON) — utilisée par le batch phase 0 ET par le refresh nocturne.
+FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
+
 
 class EdgarClient:
     def __init__(self):
@@ -68,7 +72,7 @@ class EdgarClient:
         ext = ".json" if ".json" in url else ".bin"
         return Path(settings.cache_dir) / "edgar" / f"{slug}_{digest}{ext}"
 
-    def get(self, url: str, *, cached: bool = True) -> bytes:
+    def get(self, url: str, *, cached: bool = True, max_age: float | None = None) -> bytes:
         """GET `url` en respectant le budget de 10 req/s, renvoie les octets.
 
         Synchrone volontairement : les téléchargements massifs tournent dans
@@ -79,10 +83,17 @@ class EdgarClient:
         prochain lancement : règle SEC « mettre en cache plutôt que de
         re-interroger EDGAR ». Seules les réponses 2xx sont écrites (un
         403/404 ne doit jamais rester en cache — voir plus bas).
+
+        `max_age` (secondes, None = cache pérenne) : au-delà de cet âge le
+        fichier de cache est considéré périmé et la requête part quand
+        même — c'est le levier du job nocturne, qui doit voir les dépôts
+        d'AUJOURD'HUI sans désactiver le cache pour tout le monde (les
+        scripts batchs gardent le cache pérenne).
         """
         cache_file = self._cache_path(url) if cached else None
         if cache_file is not None and cache_file.exists():
-            return cache_file.read_bytes()
+            if max_age is None or (time.time() - cache_file.stat().st_mtime) < max_age:
+                return cache_file.read_bytes()
 
         # Combien de l'écart de 0.1 s reste-t-il depuis la dernière requête ?
         wait = MIN_INTERVAL - (time.monotonic() - self._last)

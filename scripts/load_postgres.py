@@ -31,26 +31,18 @@ import sys
 from app.backtest.cohort import sector_group_for_sic
 from app.db.repo import (
     get_conn,
-    delete_facts,
     upsert_company,
-    upsert_facts,
     upsert_filing,
     upsert_prices,
 )
 from app.edgar.client import EdgarClient
 from app.edgar.submissions import load_filing_rows
-from app.normalize.loader import extract
+from app.ingest.companyfacts import ingest_companyfacts
 from scripts.fetch_phase0 import CACHE_DIR, OUT_DIR, resolve_run
 
-# URL du dépôt dans EDGAR, dérivée de l'accession (mêmes nommage que la
-# phase 0 : chaque valeur exportée est cliquable jusqu'au document source).
-FILING_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/{accn}-index.htm"
-
-# Formulaires porteurs d'événements (§2) ingérés depuis submissions :
-# 8-K (+ amendements) pour leurs items, NT* pour les retards de dépôt.
-# Les autres formes (4, SC 13, DEF 14A…) ne servent aucun signal MVP
-# aujourd'hui — on élargira quand leurs signaux arriveront.
-EVENT_FORMS = ("8-K", "NT")
+# Formulaires porteurs d'événements (§2) — une seule source de vérité :
+# la constante vit dans app/ingest/refresh.py (le nightly l'utilise aussi).
+from app.ingest.refresh import EVENT_FORMS
 
 
 def load_prices(conn, company_id: str, slug: str, out_dir) -> int:
@@ -145,20 +137,11 @@ def main() -> None:
             sector_group = sector_group_for_sic(company.get("sic")) if company.get("sic") else None
             company_id = upsert_company(conn, cik, name, company.get("ticker"), sector_group)
 
-            # 1. Dépots d'abord : les faits pointent vers leurs ids.
-            facts = extract(companyfacts)
-            filing_ids: dict[str, str] = {}
-            for fact in facts:
-                accn = fact["accn"]
-                if accn not in filing_ids:
-                    filing_ids[accn] = upsert_filing(
-                        conn,
-                        company_id,
-                        accession=accn,
-                        form_type="10-K",  # extract ne garde que l'annuel
-                        filed_at=fact["filed"],
-                        url=FILING_URL.format(cik=cik, accn=accn.replace("-", "")),
-                    )
+            # 1. Faits XBRL : extract + purge/réinsertion via le moteur
+            # partagé (app/ingest/companyfacts.py) — le refresh nocturne
+            # utilise EXACTEMENT le même code, une seule implémentation
+            # des règles de sélection (vote de millésime, fenêtre 300-400j…).
+            stats = ingest_companyfacts(conn, company_id, cik, companyfacts)
 
             # 1 bis. Dépôts événementiels (8-K items, NT retard) : mêmes
             # lignes submissions que scripts.fetch_submissions met en cache.
@@ -188,32 +171,12 @@ def main() -> None:
                     report_date=fr["report_date"],
                 )
 
-            # 2. Puis les faits eux-mêmes.
-            rows = [
-                {
-                    "company_id": company_id,
-                    "filing_id": filing_ids[fact["accn"]],
-                    "concept": fact["concept"],
-                    "value": fact["value"],
-                    "period_end": fact["period_end"],
-                    # Convention phase 0 : « exercice » = année de la date
-                    # de FIN de période (le fiscal_year du libellé SEC est
-                    # piégé en colonne comparative, cf. loader).
-                    "fiscal_year": int(fact["period_end"][:4]),
-                }
-                for fact in facts
-            ]
-            # 2. Purge de l'ancien lot PUIS écriture : upsert seul = les
-            # faits que l'extraction ne produit plus resteraient en base
-            # (règles qui évoluent). Même transaction → atomicité.
-            n_purged = delete_facts(conn, company_id)
-            n_facts = upsert_facts(conn, company_id, rows)
             n_prices = load_prices(conn, company_id, slug, out_dir)
-            totals += n_facts
-            purge_note = f", {n_purged} périmés purgés" if n_purged else ""
+            totals += stats["facts"]
+            purge_note = f", {stats['purged']} périmés purgés" if stats["purged"] else ""
             print(
-                f"  [{i}/{len(companies)}] {slug}: {n_facts} faits{purge_note}, "
-                f"{len(filing_ids)} dépôts 10-K + {len(event_filings)} événements, "
+                f"  [{i}/{len(companies)}] {slug}: {stats['facts']} faits{purge_note}, "
+                f"{stats['filings_10k']} dépôts 10-K + {len(event_filings)} événements, "
                 f"{n_prices} cours"
             )
 

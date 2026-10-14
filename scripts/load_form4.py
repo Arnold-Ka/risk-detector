@@ -20,8 +20,8 @@ import json
 import sys
 from pathlib import Path
 
-from app.db.repo import get_conn, get_company, upsert_filing, upsert_insider_transactions
-from app.edgar.submissions import filing_url
+from app.db.repo import get_conn, get_company
+from app.ingest.form4 import ingest_form4_rows
 
 FORM4_DIR = Path("data/cache/form4")
 
@@ -41,39 +41,9 @@ def ingest_company(conn, company_id: str, cik: int) -> tuple[int, int]:
             if line:
                 rows.append(json.loads(line))
 
-    # 1. Dépôts Form 4 (une fois par accession) -> filing_id.
-    filing_ids: dict[str, str] = {}
-    for row in rows:
-        accn = row["accession"]
-        if accn not in filing_ids:
-            filing_ids[accn] = upsert_filing(
-                conn,
-                company_id,
-                accession=accn,
-                form_type="4",
-                filed_at=row["filed_at"],
-                url=filing_url(cik, accn),
-            )
-
-    # 2. Transactions, prêtes pour repo (filing_id + dates en ISO).
-    tx_rows = [
-        {
-            "filing_id": filing_ids[r["accession"]],
-            "transaction_date": r["transaction_date"],
-            "code": r.get("code"),
-            "acquired_disposed": r.get("acquired_disposed"),
-            "shares": r.get("shares"),
-            "price": r.get("price"),
-            "owner_name": r.get("owner_name"),
-            "is_officer": r.get("is_officer"),
-            "is_director": r.get("is_director"),
-            "officer_title": r.get("officer_title"),
-            "plan_10b5_1": r.get("plan_10b5_1"),
-        }
-        for r in rows
-    ]
-    inserted = upsert_insider_transactions(conn, company_id, tx_rows)
-    return len(filing_ids), inserted
+    # Moteur partagé avec le refresh nocturne (app/ingest/form4.py) :
+    # upsert des dépôts (filing_id = source traçable) + transactions.
+    return ingest_form4_rows(conn, company_id, cik, rows)
 
 
 def main() -> int:

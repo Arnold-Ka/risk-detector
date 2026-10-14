@@ -35,7 +35,7 @@ from pathlib import Path
 
 import httpx
 
-from app.edgar.client import EdgarClient
+from app.edgar.client import FACTS_URL, EdgarClient
 # Extraction DÉLÉGUÉE au chargeur produit : la phase 0 ne fait plus que
 # du formatage. Une seule implémentation des règles de sélection
 # (fenêtre de durée, priorité de tags, vote de millésime) vivant dans
@@ -93,7 +93,7 @@ SEARCH_URL = (
     "https://www.sec.gov/cgi-bin/browse-edgar"
     "?action=getcompany&company={name}&type=10-K&count=10&output=atom"
 )
-FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
+# FACTS_URL vit dans app/edgar/client.py (partagé avec le refresh nocturne).
 
 
 def resolve_cik(client: EdgarClient, company: dict) -> int:
