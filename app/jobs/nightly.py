@@ -37,8 +37,10 @@ from datetime import date
 from app.db.repo import (
     fetch_event_rows,
     fetch_fact_rows,
+    fetch_insider_rows,
     fetch_price_rows,
     get_conn,
+    has_form4_filings,
     list_companies,
     replace_company_signals,
 )
@@ -58,7 +60,17 @@ def main() -> None:
             # Dépôts 8-K/NT -> signaux d'événements (toujours une liste :
             # on a vérifié, même vide, le « 0 » est donc vrai).
             events = fetch_event_rows(conn, company["id"])
-            results = compute_company(rows, prices, events)
+            # Transactions Form 4 -> signal ventes de dirigeants. Contrat
+            # None/[] strict : [] seulement si des dépôts Form 4 existent
+            # en base (on a RÉELLEMENT vérifié) ; sinon None — un []
+            # fantôme diluerait le composite de tout le monde (mesuré :
+            # det6 68 % -> 57 % avant ce garde-fou).
+            insiders = (
+                fetch_insider_rows(conn, company["id"])
+                if has_form4_filings(conn, company["id"])
+                else None
+            )
+            results = compute_company(rows, prices, events, insiders)
             payload = [r.to_row(company["id"], computed_at) for r in results]
             n = replace_company_signals(conn, company["id"], payload, computed_at)
 

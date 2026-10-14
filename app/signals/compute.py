@@ -27,13 +27,22 @@ tardive gagne (tri croissant + écrasement), exactement comme la phase 0.
 
 from datetime import date
 
-from app.signals import altman, beneish, composite, divergence, piotroski, runway
+from app.signals import (
+    altman,
+    beneish,
+    composite,
+    divergence,
+    insiders,
+    piotroski,
+    runway,
+)
 from app.signals.common import SignalResult
 from app.signals.events import (
     assign_to_years,
     evaluate_critical_8k,
     evaluate_late_filing,
 )
+from app.signals.insiders import is_open_sale
 
 # Cours utilisable s'il est à moins de 14 jours du bilan (week-end/férié
 # derrière : la date_valeur de fetch_prices est le dernier cours ≤ bilan).
@@ -143,6 +152,7 @@ def compute_company(
     rows: list[dict],
     prices: list[tuple[str, float]],
     events: list[dict] | None = None,
+    insiders_rows: list[dict] | None = None,
 ) -> list[SignalResult]:
     """Tous les signaux de tous les exercices d'une entreprise.
 
@@ -157,6 +167,9 @@ def compute_company(
         zéro affirme avoir vérifié — ce serait un faux score) ;
       - []    = chargés, aucun événement : signaux « saine » émis pour la
         continuité des courbes.
+
+    insiders_rows : transactions Form 4 (repo.fetch_insider_rows) — même
+      contrat None/[] que events (signal insider_sales).
     """
     years = build_years(rows)
     if not years:
@@ -178,11 +191,21 @@ def compute_company(
     # Événements -> exercices : toutes les dates de bilan connues servent
     # d'échelle de rattachement (report_date privilégié, cf. events.py).
     events_by_year: dict[int, list[dict]] = {}
+    insiders_by_year: dict[int, list[dict]] = {}
+    all_period_ends = sorted(
+        {node["period_end"] for y in years.values() for node in y.values()}
+    )
     if events is not None:
-        all_period_ends = sorted(
-            {node["period_end"] for y in years.values() for node in y.values()}
-        )
         events_by_year, _dropped = assign_to_years(events, all_period_ends)
+    if insiders_rows is not None:
+        # Même échelle de rattachement que les 8-K : ancre = date de la
+        # transaction (report_date du dict), sinon date de dépôt.
+        tx_like = [
+            {**t, "report_date": t["transaction_date"],
+             "filed_at": t.get("filed_at") or t["transaction_date"]}
+            for t in insiders_rows
+        ]
+        insiders_by_year, _dropped = assign_to_years(tx_like, all_period_ends)
 
     results: list[SignalResult] = []
     for year in sorted(years):
@@ -248,6 +271,23 @@ def compute_company(
             year_results.append(
                 evaluate_critical_8k(k8_rows, period_end, filing_id)
             )
+
+        # --- Ventes de dirigeants (Form 4, §2 « ventes massives ») -------
+        # cap (capitalisation) et shares_outstanding sont déjà calculés
+        # pour Altman : le signal insiders réutilise les MÊMES valeurs —
+        # un seul miroir de la chaîne de repli de valorisation.
+        if insiders_rows is not None:
+            year_txs = insiders_by_year.get(year, [])
+            sales = [t for t in year_txs if is_open_sale(t)]
+            res = insiders.evaluate(
+                sales,
+                market_capitalisation=cap,
+                shares_outstanding=_v(cur, "shares_outstanding"),
+                period_end=period_end,
+                filing_id=filing_id,
+            )
+            if res:
+                year_results.append(res)
 
         # --- Composite : niveau global de l'exercice ------------------------
         severities = {r.signal_type: r.severity for r in year_results}

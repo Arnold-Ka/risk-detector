@@ -47,7 +47,7 @@ CREATE TABLE signals (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id uuid NOT NULL REFERENCES companies(id),
     -- 'altman' | 'piotroski' | 'beneish' | 'divergence' | 'runway'
-    -- | 'late_filing' | 'critical_8k' | 'composite'
+    -- | 'late_filing' | 'critical_8k' | 'insider_sales' | 'composite'
     signal_type text NOT NULL,
     -- Exercice auquel le score se rapporte (date de fin de période du
     -- bilan) — PAS la date de calcul : l'historique par exercice est ce
@@ -75,6 +75,37 @@ CREATE TABLE prices (
     close numeric NOT NULL,
     PRIMARY KEY (company_id, date)
 );
+
+-- Transactions de dirigeants (Form 4, signal §2 « ventes massives ») :
+-- une ligne par transaction du tableau NON dérivé (actions directes ;
+-- options/warrants hors périmètre v1), toutes catégories de transactions
+-- (le filtre officier/directeur + code S se fait au calcul du signal).
+-- Valeur = prix x quantite, calculée par PostgreSQL (NULL si composante
+-- absente — la règle « donnée manquante » s'applique côté signal).
+CREATE TABLE insider_transactions (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    -- Dépôt source du Form 4 (traçabilité : chaque signal pointe un dépôt).
+    filing_id uuid REFERENCES filings(id) ON DELETE SET NULL,
+    transaction_date date NOT NULL,
+    code text,                    -- code EDGAR : S vente, P achat, M option…
+    acquired_disposed text,       -- 'A' acquis | 'D' cédé
+    shares numeric,
+    price numeric,
+    value numeric GENERATED ALWAYS AS (shares * price) STORED,
+    owner_name text,
+    is_officer boolean NOT NULL DEFAULT false,
+    is_director boolean NOT NULL DEFAULT false,
+    officer_title text,
+    plan_10b5_1 boolean NOT NULL DEFAULT false,
+    -- Idempotence : rejouer load_form4 ne duplique rien (même dépôt,
+    -- même transaction, même propriétaire).
+    CONSTRAINT insider_tx_unique UNIQUE
+        (company_id, filing_id, transaction_date, code, shares, price, owner_name)
+);
+
+CREATE INDEX insider_tx_company_date_idx
+    ON insider_transactions (company_id, transaction_date);
 
 CREATE TABLE users (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

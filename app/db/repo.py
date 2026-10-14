@@ -300,6 +300,112 @@ def fetch_event_rows(conn, company_id: str) -> list[dict]:
         ]
 
 
+def upsert_insider_transactions(conn, company_id: str, rows: list[dict]) -> int:
+    """Ingestion batch des transactions Form 4 d'une entreprise.
+
+    `rows` : lignes prêtes (déjà rattachées à leur filing_id) —
+    {filing_id, transaction_date, code, acquired_disposed, shares, price,
+     owner_name, is_officer, is_director, officer_title, plan_10b5_1}.
+    ON CONFLICT DO NOTHING sur la clé d'idempotence du schéma : un
+    re-jeu de scripts/load_form4 est sans effet. Retourne le nombre de
+    lignes réellement insérées.
+    """
+    if not rows:
+        return 0
+    cols = (
+        "company_id", "filing_id", "transaction_date", "code",
+        "acquired_disposed", "shares", "price", "owner_name",
+        "is_officer", "is_director", "officer_title", "plan_10b5_1",
+    )
+    with conn.cursor() as cur:
+        # Un seul INSERT multi-lignes par paquet : cur.rowcount est alors
+        # exact (executemany ne garantit pas le compte total en psycopg3).
+        inserted = 0
+        for start in range(0, len(rows), 1000):
+            chunk = rows[start : start + 1000]
+            values = ", ".join(
+                "(" + ", ".join("%s" for _ in cols) + ")" for _ in chunk
+            )
+            all_params: list = []
+            for r in chunk:
+                all_params.append(company_id)
+                all_params.extend(
+                    [r["filing_id"], r["transaction_date"], r.get("code"),
+                     r.get("acquired_disposed"), r.get("shares"), r.get("price"),
+                     r.get("owner_name"), bool(r.get("is_officer")),
+                     bool(r.get("is_director")), r.get("officer_title"),
+                     bool(r.get("plan_10b5_1"))]
+                )
+            cur.execute(
+                f"""
+                INSERT INTO insider_transactions ({', '.join(cols)})
+                VALUES {values}
+                ON CONFLICT DO NOTHING
+                """,
+                all_params,
+            )
+            inserted += cur.rowcount
+        return inserted
+
+
+def has_form4_filings(conn, company_id: str) -> bool:
+    """True si des dépôts Form 4 sont en base pour cette entreprise.
+
+    Sert au contrat None/[] du signal insiders : la table
+    `insider_transactions` ne contient QUE les entreprises passées par
+    scripts/load_form4 — sans dépôt Form 4, un [] serait un mensonge
+    (« on a vérifié, aucune vente ») alors que les Form 4 n'ont jamais
+    été téléchargés.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM filings "
+            "WHERE company_id = %s AND form_type = '4')",
+            (company_id,),
+        )
+        return bool(cur.fetchone()[0])
+
+
+def fetch_insider_rows(conn, company_id: str) -> list[dict]:
+    """Transactions Form 4 d'une entreprise (alimente app.signals.insiders).
+
+    Chaque ligne porte filing_id + filed_at (dépôt source, traçabilité)
+    et `value` (colonne générée prix x quantité — NULL si prix absent).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT t.filing_id, t.transaction_date, t.code,
+                   t.acquired_disposed, t.shares, t.price, t.value,
+                   t.owner_name, t.is_officer, t.is_director, t.officer_title,
+                   t.plan_10b5_1, f.filed_at
+            FROM insider_transactions t
+            LEFT JOIN filings f ON f.id = t.filing_id
+            WHERE t.company_id = %s
+            ORDER BY t.transaction_date
+            """,
+            (company_id,),
+        )
+        return [
+            {
+                "filing_id": str(r[0]) if r[0] else None,
+                "transaction_date": r[1].isoformat(),
+                "code": r[2],
+                "acquired_disposed": r[3],
+                "shares": float(r[4]) if r[4] is not None else None,
+                "price": float(r[5]) if r[5] is not None else None,
+                "value": float(r[6]) if r[6] is not None else None,
+                "owner_name": r[7],
+                "is_officer": r[8],
+                "is_director": r[9],
+                "officer_title": r[10],
+                "plan_10b5_1": r[11],
+                "filed_at": r[12].isoformat() if r[12] else None,
+            }
+            for r in cur.fetchall()
+        ]
+
+
 def latest_signals(conn, company_id: str) -> list[dict]:
     """Dernier signal de chaque type (la fiche de risque « aujourd'hui »).
 

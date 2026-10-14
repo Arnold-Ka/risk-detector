@@ -15,6 +15,7 @@ export const SIGNAL_ORDER: SignalType[] = [
   "runway",
   "late_filing",
   "critical_8k",
+  "insider_sales",
 ];
 
 export const SIGNAL_LABELS: Record<SignalType, string> = {
@@ -26,6 +27,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   runway: "Autonomie de trésorerie",
   late_filing: "Dépôts en retard",
   critical_8k: "8-K critiques",
+  insider_sales: "Ventes de dirigeants",
 };
 
 // Courte explication en langage simple (feuille de route §9 :
@@ -46,6 +48,8 @@ export const SIGNAL_HINTS: Record<SignalType, string> = {
     "Rapports trimestriels/annuels déposés après le délai (formulaires NT) — souvent un problème dans les comptes.",
   critical_8k:
     "Événements graves annoncés en 8-K : faillite, défaut de dette, comptes corrigés, changement d'auditeur, départ de dirigeant.",
+  insider_sales:
+    "Part des actions vendues par les dirigeants (officiers, administrateurs) sur un an. Au-dessus de 0,25 % du capital = vigilance, 1 % = défaillance.",
 };
 
 /** Badge coloré par sévérité (signaux) ou niveau (composite). */
@@ -86,6 +90,11 @@ export function formatValue(type: SignalType, value: number | null): string {
       return value === 0 ? "aucun" : `${Math.round(value)} dépôt(s) tardif(s)`;
     case "critical_8k":
       return value === 0 ? "aucun" : `${Math.round(value)} 8-K critique(s)`;
+    case "insider_sales":
+      // Valeur = ratio (part du capital vendue) ; 0 = aucune vente.
+      return value === 0
+        ? "aucune vente"
+        : `${(value * 100).toFixed(2)} % du capital`;
     case "composite":
       return `indice ${value.toFixed(1)} / 2`;
   }

@@ -41,6 +41,10 @@ WEIGHTS: dict[str, float] = {
     "divergence": 1.0,
     "runway": 1.0,
     "late_filing": 1.0,
+    # Ventes massives de dirigeants (Form 4, §2) : poids 1.0 par défaut,
+    # re-calibrable au backtest comme critical_8k (aucun gain mesuré
+    # encore — le signal vient d'atterrir, batch Form 4 en cours).
+    "insider_sales": 1.0,
     # Recalibré le 2026-10-14 par le backtest (547 faillites / 328
     # témoins S&P 500, scripts/tune_weights.py) : à 1.0, la vigilance
     # annuelle de l'item 8-K 5.02 (officier qui quitte) touche 87 % des

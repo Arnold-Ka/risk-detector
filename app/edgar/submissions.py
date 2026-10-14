@@ -56,6 +56,7 @@ def load_filing_rows(client: EdgarClient, cik: int) -> list[dict]:
     for page in pages:
         # Les tableaux sont indexés par dépôt i (colonne par champ).
         forms = page.get("form", [])
+        primaries = page.get("primaryDocument", [])
         for i in range(len(forms)):
             accession = page["accessionNumber"][i]
             if accession in rows:
@@ -72,6 +73,10 @@ def load_filing_rows(client: EdgarClient, cik: int) -> list[dict]:
                 # SQL à distinguer « 8-K sans item listé » de « colonne
                 # vierge » (NULL = dépôt non enrichi).
                 "items": page["items"][i] or "",
+                # primaryDocument : chemin du document principal (utile pour
+                # les Form 4 — le XML brut se dérive de ce chemin, cf.
+                # app/edgar/form4.py). "" quand absent.
+                "primary_doc": primaries[i] if i < len(primaries) else "",
                 "url": filing_url(cik, accession),
             }
     return sorted(rows.values(), key=lambda r: r["filed_at"])
