@@ -11,8 +11,9 @@ Implémentation initiale (à recalibrer sur le backtest des semaines 7-8) :
     calculable (donnée manquante) est exclu du numérateur ET du
     dénominateur — sain de comparer 4 signaux plutôt que de noter 0 un
     signal absent ;
-  - poids initiaux égaux (1.0) : aucun résultat de backtest ne justifie
-    encore d'hierarchiser Altman contre Piotroski ;
+  - poids initiaux égaux (1.0) — sauf `critical_8k` à 0.5, seul levier
+    dont le backtest (§6 sem. 7-8, 2026-10-14) a mesuré un gain net
+    (détect 6 m toujours en cible 60-70 %, FPR divisé par deux) ;
   - bandes : [0, 0,5[ faible · [0,5, 1[ modéré · [1, 1,5[ élevé ·
     [1,5, 2] critique.
 
@@ -30,17 +31,27 @@ from app.signals.common import (
     SignalResult,
 )
 
-# Poids initiaux — TODO(backtest sem. 7-8) : recalibrer et documenter.
+# Poids initiaux égaux, sauf recalibration backtest (voir ci-dessous).
+# TODO(backtest) : les autres poids restent à 1.0 faute de gain mesuré
+# (balayage monovariable, scripts/tune_weights.py).
 WEIGHTS: dict[str, float] = {
     "altman": 1.0,
     "piotroski": 1.0,
     "beneish": 1.0,
     "divergence": 1.0,
     "runway": 1.0,
-    # Signaux d'événements (§2) : même poids unitaire par défaut — le
-    # backtest dira si un 8-K de faillite mérite plus qu'un Z-score.
     "late_filing": 1.0,
-    "critical_8k": 1.0,
+    # Recalibré le 2026-10-14 par le backtest (547 faillites / 328
+    # témoins S&P 500, scripts/tune_weights.py) : à 1.0, la vigilance
+    # annuelle de l'item 8-K 5.02 (officier qui quitte) touche 87 % des
+    # témoins CHAQUE année et faisait monter le taux d'alertes fausses
+    # du seuil « >= modéré » à 27,2 % par exercice. À 0.5 :
+    #   détection 6 mois  74,2 % -> 67,8 %   (cible feuille de route 60-70 %)
+    #   détection 12 mois 68,4 % -> 61,8 %
+    #   FPR par exercice  27,2 % -> 14,6 %   (jamais en 10 ans 97 % -> 78 %)
+    # Le signal reste présent (un 1.03/2.04/4.02 compte toujours), il ne
+    # sur-vote plus les exercices simples où tout le monde a un 5.02.
+    "critical_8k": 0.5,
 }
 
 # index de gravité par sévérité (texte affiché -> nombre).
