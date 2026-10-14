@@ -17,6 +17,11 @@ Décisions d'évaluation (reprises de scripts/backtest.py quand applicable) :
     dépôts tardifs non plus ;
   - classique de comparaison = règle produit retenue : niveau >= modéré.
 
+v2 (features événementielles) : le vecteur annuel inclut les dépôts
+8-K critiques / NT de l'exercice (app/dl/dataset.event_features) —
+le LSTM v1 ne voyait que les ratios et perdait sur la détection
+(55,6 % vs 78,3 % à 6 mois) faute de l'arme de critical_8k.
+
 Usage : uv run python -m scripts.train_lstm
 """
 
@@ -28,7 +33,7 @@ from app.backtest.metrics import add_months, build_snapshots, exceeds, pick_rece
 from app.dl.dataset import INPUT_DIM, Sample, build_samples, company_year_points
 from app.dl.model import auc_rank, predict, train_model
 from scripts.backtest import MANIFEST, load_manifest, load_signal_rows
-from scripts.export_dataset import load_fact_rows
+from scripts.export_dataset import load_event_rows, load_fact_rows
 
 TEST_START = 2022  # premier exercice du split de test
 VAL_START = 2019  # bornes du split de validation
@@ -155,10 +160,12 @@ def main() -> int:
     all_ciks = sorted(set(anchors) | control_ciks)
 
     # 1) Echantillons depuis les faits (meme builder que l'export CSV).
+    # v2 : les depots 8-K/NT alimentent les features d'evenements.
     by_cik = load_fact_rows(all_ciks)
+    events_by_cik = load_event_rows(all_ciks)
     samples_by_cik: dict[int, list[Sample]] = {}
     for cik in all_ciks:
-        points = company_year_points(by_cik.get(cik, []))
+        points = company_year_points(by_cik.get(cik, []), events_by_cik.get(cik, []))
         samples_by_cik[cik] = build_samples(points, cik, anchors.get(cik))
 
     all_samples = [s for samples in samples_by_cik.values() for s in samples]

@@ -3,12 +3,13 @@ from datetime import date
 
 import torch
 
-from app.dl.dataset import Sample
+from app.dl.dataset import INPUT_DIM, Sample
 from app.dl.model import LstmScorer, auc_rank, collate, predict, seed_everything
 
 
 def _sample(cik, year, label):
-    vec = (0.1, 0.0) * 18
+    # Vecteur de la bonne dimension (36 ratios + 4 evenements v2).
+    vec = (0.1, 0.0) * 18 + (0.0,) * 4
     return Sample(
         cik=cik,
         period_end=date(year, 12, 31),
@@ -32,14 +33,19 @@ def test_collate_and_forward_shapes():
         cik=1,
         period_end=date(2018, 12, 31),
         availability=date(2019, 3, 1),
-        sequence=((0.1, 0.0) * 18, (0.2, 0.0) * 18, (0.3, 0.0) * 18),  # 3 ans
+        # 3 ans de vecteurs v2 (36 + 4) pour forcer un pad inegal.
+        sequence=(
+            (0.1, 0.0) * 18 + (0.0,) * 4,
+            (0.2, 0.0) * 18 + (0.0,) * 4,
+            (0.3, 0.0) * 18 + (0.0,) * 4,
+        ),
         label=0,
     )
     x, lengths, y = collate(samples)
-    assert x.shape == (3, 3, 36)  # pad a la longueur max = 3
+    assert x.shape == (3, 3, INPUT_DIM)  # pad a la longueur max = 3
     assert lengths.tolist() == [3, 2, 2]
     assert y.tolist() == [0.0, 1.0, 0.0]
-    model = LstmScorer(input_dim=36, hidden=8)
+    model = LstmScorer(input_dim=INPUT_DIM, hidden=8)
     logits = model(x, lengths)
     assert logits.shape == (3,)
     probs = predict(model, samples)
