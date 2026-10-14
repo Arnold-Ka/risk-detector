@@ -18,6 +18,10 @@ Ce qu'il produit, dans data/phase0/ :
 Lancement (depuis la racine) :
     uv run python -m scripts.fetch_phase0
     uv run python -m scripts.fetch_phase0 --refresh   # ignorer le cache
+    uv run python -m scripts.fetch_phase0 --manifest data/backtest/companies.json
+    # ^ mode backtest : mêmes règles d'extraction, mais liste d'entrées
+    #   {cik, slug, label, ticker, name...} lue dans le manifeste, CSV
+    #   écrits à côté de lui (data/backtest/*.csv) au lieu de data/phase0/.
 
 Cache : les réponses companyfacts sont écrites dans data/cache/ (gitignoré)
 — règle SEC « mettre en cache plutôt que re-interroger ».
@@ -64,6 +68,25 @@ COMPANIES = [
 
 CACHE_DIR = Path("data/cache")
 OUT_DIR = Path("data/phase0")
+
+
+def resolve_run(argv: list[str] | None = None) -> tuple[list[dict], Path]:
+    """(--manifest PATH) -> (companies, out_dir) — le standard des scripts.
+
+    Sans manifeste : le trio de phase 0 + data/phase0/ (gate historique).
+    Avec `--manifest data/backtest/companies.json` : les cohortes du
+    backtest, et les CSV d'ingestion rangés À CÔTÉ du manifeste
+    (data/backtest/*.csv, gitignorés — rejouables depuis le cache EDGAR).
+
+    Même moteur, deux populations : fetch_phase0, fetch_prices,
+    fetch_submissions et load_postgres appellent TOUS cette fonction.
+    """
+    argv = sys.argv if argv is None else argv
+    if "--manifest" in argv:
+        path = Path(argv[argv.index("--manifest") + 1])
+        companies = json.loads(path.read_text(encoding="utf-8"))
+        return companies, path.parent
+    return COMPANIES, OUT_DIR
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SEARCH_URL = (
@@ -170,11 +193,15 @@ def build_rows(cik: int, companyfacts: dict) -> tuple[list[dict], dict[int, dict
     return rows, per_year, notes + [f"manquant: {m}" for m in missing]
 
 
-def write_outputs(slug: str, rows: list[dict], per_year: dict[int, dict]) -> Path:
-    """Écrit facts (long, sourcé) + ratios (A B C E, D manquant)."""
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+def write_outputs(slug: str, rows: list[dict], per_year: dict[int, dict], out_dir: Path) -> Path:
+    """Écrit facts (long, sourcé) + ratios (A B C E, D manquant).
 
-    facts_file = OUT_DIR / f"{slug}_facts.csv"
+    `out_dir` : data/phase0/ (trio) ou data/backtest/ (manifeste) — le
+    chemin est injecté par resolve_run, pas figé ici.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    facts_file = out_dir / f"{slug}_facts.csv"
     with facts_file.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(
             f, fieldnames=["year", "period_end", "concept", "value", "accession", "filed", "url"]
@@ -182,7 +209,7 @@ def write_outputs(slug: str, rows: list[dict], per_year: dict[int, dict]) -> Pat
         w.writeheader()
         w.writerows(sorted(rows, key=lambda r: (r["year"], r["concept"])))
 
-    ratios_file = OUT_DIR / f"{slug}_ratios.csv"
+    ratios_file = out_dir / f"{slug}_ratios.csv"
     with ratios_file.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         # D (valeur boursière / dettes) exige un cours de bourse : aucune
@@ -208,10 +235,12 @@ def write_outputs(slug: str, rows: list[dict], per_year: dict[int, dict]) -> Pat
 
 def main() -> None:
     refresh = "--refresh" in sys.argv
+    companies, out_dir = resolve_run()
+    manifest_mode = out_dir != OUT_DIR
     client = EdgarClient()  # rate-limit 0.1 s + User-Agent du .env
 
-    for company in COMPANIES:
-        print(f"\n=== {company['label']}")
+    for i, company in enumerate(companies, 1):
+        print(f"\n=== {company['label']} ({i}/{len(companies)})")
         cik = resolve_cik(client, company)
         print(f"  CIK: {cik}")
         facts = load_facts(client, cik, refresh)
@@ -220,24 +249,30 @@ def main() -> None:
         if not gaap:
             # Découverte typique de phase 0 : dépôts d'avant l'ère XBRL
             # (obligatoire depuis ~2009) n'ont AUCUN fait structuré.
+            # Normal dans le backtest (cotée avant 2009 + pas de XBRL).
             print("  !! AUCUNE donnée XBRL (dépôts antérieurs à l'ère XBRL ?)")
-            print("     -> entreprise à remplacer dans le trio de la phase 0")
+            if not manifest_mode:
+                print("     -> entreprise à remplacer dans le trio de la phase 0")
             continue
 
         rows, per_year, notes = build_rows(cik, facts)
-        out = write_outputs(company["slug"], rows, per_year)
+        out = write_outputs(company["slug"], rows, per_year, out_dir)
         years = sorted(per_year)
         print(f"  années fiscales: {years[0]}–{years[-1]} ({len(years)} ans)" if years else "  aucune année")
-        print(f"  variantes retenues: {', '.join(n for n in notes if not n.startswith('manquant')) or '—'}")
-        print(f"  manques: {', '.join(n.removeprefix('manquant: ') for n in notes if n.startswith('manquant')) or '—'}")
+        if not manifest_mode:
+            # Le relevé de variantes (10 lignes/entreprise) serait illisible
+            # sur 875 entreprises du backtest — gardé pour le trio.
+            print(f"  variantes retenues: {', '.join(n for n in notes if not n.startswith('manquant')) or '—'}")
+            print(f"  manques: {', '.join(n.removeprefix('manquant: ') for n in notes if n.startswith('manquant')) or '—'}")
         print(f"  sorties: {out} + ratios.csv")
 
-    print(
-        "\nRappel phase 0 : la colonne Z reste À CALCULER À LA MAIN dans le "
-        "tableur (gate du projet). Les colonnes de valorisation (D) sont "
-        "renseignées par scripts.fetch_prices — à relancer APRÈS ce script "
-        "(fetch_phase0 régénère ratios.csv à zéro)."
-    )
+    if not manifest_mode:
+        print(
+            "\nRappel phase 0 : la colonne Z reste À CALCULER À LA MAIN dans le "
+            "tableur (gate du projet). Les colonnes de valorisation (D) sont "
+            "renseignées par scripts.fetch_prices — à relancer APRÈS ce script "
+            "(fetch_phase0 régénère ratios.csv à zéro)."
+        )
 
 
 if __name__ == "__main__":

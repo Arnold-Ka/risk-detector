@@ -14,6 +14,8 @@ Sorties (tables de app/db/schema.sql) :
 
 Lancement (depuis la racine) :
     uv run python -m scripts.load_postgres
+    uv run python -m scripts.load_postgres --manifest data/backtest/companies.json
+    # ^ ingère les cohortes du backtest (CSV lus à côté du manifeste).
 
 Le chargeur fait tout le travail de sélection (règles dans
 app/normalize/loader.py, validées par tests/test_normalize.py) : ce
@@ -26,6 +28,7 @@ import csv
 import json
 import sys
 
+from app.backtest.cohort import sector_group_for_sic
 from app.db.repo import (
     get_conn,
     delete_facts,
@@ -37,7 +40,7 @@ from app.db.repo import (
 from app.edgar.client import EdgarClient
 from app.edgar.submissions import load_filing_rows
 from app.normalize.loader import extract
-from scripts.fetch_phase0 import CACHE_DIR, COMPANIES, OUT_DIR
+from scripts.fetch_phase0 import CACHE_DIR, OUT_DIR, resolve_run
 
 # URL du dépôt dans EDGAR, dérivée de l'accession (mêmes nommage que la
 # phase 0 : chaque valeur exportée est cliquable jusqu'au document source).
@@ -50,7 +53,7 @@ FILING_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/{accn}-index.
 EVENT_FORMS = ("8-K", "NT")
 
 
-def load_prices(conn, company_id: str, slug: str) -> int:
+def load_prices(conn, company_id: str, slug: str, out_dir) -> int:
     """Insère les cours retenus par fetch_prices (date_valeur, cours).
 
     Seules les lignes AVEC cours sont prises : quand fetch_prices est
@@ -58,7 +61,7 @@ def load_prices(conn, company_id: str, slug: str) -> int:
     cours est vide — « donnée manquante » plutôt qu'un prix inventé, donc
     rien à inserer dans `prices`.
     """
-    path = OUT_DIR / f"{slug}_ratios.csv"
+    path = out_dir / f"{slug}_ratios.csv"
     if not path.exists():
         return 0
     with path.open(encoding="utf-8") as f:
@@ -104,24 +107,29 @@ def verify(conn) -> None:
 
 
 def main() -> None:
+    companies, out_dir = resolve_run()
     # Contrôle d'entrée : sans cache SEC, on ne peut rien charger — message
     # clair plutôt qu'un échec noyé dans un traceback json.JSONDecodeError.
     missing = [
         CACHE_DIR / f"companyfacts_{c['cik']:010d}.json"
-        for c in COMPANIES
+        for c in companies
         if not (CACHE_DIR / f"companyfacts_{c['cik']:010d}.json").exists()
     ]
     if missing:
+        cmd = "uv run python -m scripts.fetch_phase0"
+        if out_dir != OUT_DIR:  # mode backtest : le manifeste précise la population
+            cmd += " --manifest data/backtest/companies.json"
         sys.exit(
             "Cache SEC manquant : "
-            + ", ".join(str(p) for p in missing)
-            + "\nLancer d'abord : uv run python -m scripts.fetch_phase0"
+            + ", ".join(str(p) for p in missing[:5])
+            + (f"\n(+ {len(missing) - 5} autres)" if len(missing) > 5 else "")
+            + f"\nLancer d'abord : {cmd}"
         )
 
     conn = get_conn()
     try:
         totals = 0
-        for company in COMPANIES:
+        for i, company in enumerate(companies, 1):
             slug = company["slug"]
             cik = company["cik"]
             cache_file = CACHE_DIR / f"companyfacts_{cik:010d}.json"
@@ -132,7 +140,10 @@ def main() -> None:
             # sinon nom officiel du déposant (source de vérité SEC),
             # sinon libellé de la phase 0.
             name = company.get("name") or companyfacts.get("entityName") or company["label"]
-            company_id = upsert_company(conn, cik, name, company.get("ticker"))
+            # sector_group depuis le SIC du manifeste (banques/assurances/REIT
+            # = scores non fiables, cf. spec) ; None = ne pas toucher (COALESCE).
+            sector_group = sector_group_for_sic(company.get("sic")) if company.get("sic") else None
+            company_id = upsert_company(conn, cik, name, company.get("ticker"), sector_group)
 
             # 1. Dépots d'abord : les faits pointent vers leurs ids.
             facts = extract(companyfacts)
@@ -197,12 +208,13 @@ def main() -> None:
             # (règles qui évoluent). Même transaction → atomicité.
             n_purged = delete_facts(conn, company_id)
             n_facts = upsert_facts(conn, company_id, rows)
-            n_prices = load_prices(conn, company_id, slug)
+            n_prices = load_prices(conn, company_id, slug, out_dir)
             totals += n_facts
             purge_note = f", {n_purged} périmés purgés" if n_purged else ""
             print(
-                f"  {slug}: {n_facts} faits{purge_note}, {len(filing_ids)} dépôts "
-                f"10-K + {len(event_filings)} événements, {n_prices} cours"
+                f"  [{i}/{len(companies)}] {slug}: {n_facts} faits{purge_note}, "
+                f"{len(filing_ids)} dépôts 10-K + {len(event_filings)} événements, "
+                f"{n_prices} cours"
             )
 
         conn.commit()  # transaction unique : tout ou rien (voir repo.get_conn)

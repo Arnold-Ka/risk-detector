@@ -13,3 +13,8 @@ frontend/.next/
 
 # EDGAR raw responses cache (created by app/edgar/client.py)
 data/cache/
+
+# CSV d'ingestion du backtest (rejouables depuis le cache EDGAR :
+# data/backtest/companies.json reste versionné, les exports ne le sont pas)
+data/backtest/*_facts.csv
+data/backtest/*_ratios.csv

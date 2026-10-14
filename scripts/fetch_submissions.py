@@ -12,6 +12,7 @@ Form 4.
 
 Usage (depuis la racine, après fetch_phase0) :
     uv run python -m scripts.fetch_submissions
+    uv run python -m scripts.fetch_submissions --manifest data/backtest/companies.json
 Idempotent : le cache répond sans re-télécharger ; relancer après une
 nouvelle nuit de dépôts SEC pour rafraîchir (EDGAR met à jour `recent`).
 """
@@ -20,12 +21,13 @@ import json
 
 from app.edgar.client import EdgarClient
 from app.edgar.submissions import MAIN_URL, OLDER_URL, load_filing_rows
-from scripts.fetch_phase0 import COMPANIES
+from scripts.fetch_phase0 import resolve_run
 
 
 def main() -> None:
     client = EdgarClient()
-    for company in COMPANIES:
+    companies, _ = resolve_run()
+    for company in companies:
         cik = company["cik"]
         main_page = json.loads(client.get(MAIN_URL.format(cik=cik)))
         pages = 1

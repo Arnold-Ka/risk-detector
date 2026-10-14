@@ -40,25 +40,22 @@ c'est idempotent).
 Lancement (depuis la racine) :
     uv run python -m scripts.fetch_prices
     uv run python -m scripts.fetch_prices --refresh
+    uv run python -m scripts.fetch_prices --manifest data/backtest/companies.json
+    # ^ mode backtest : le ticker vient du manifeste ; les titres sans
+    #   ticker (faillies delistées) reposent sur le flottant SEC seuls.
 """
 
 import csv
 import json
 import sys
 import time
-from pathlib import Path
 
 import httpx
 
-# Même trio que scripts/fetch_phase0.py (verrouillé le 2026-10-12).
-COMPANIES = [
-    {"slug": "apple_healthy", "label": "Apple", "symbol": "AAPL"},
-    {"slug": "amc_distressed", "label": "AMC", "symbol": "AMC"},
-    {"slug": "bbby_bankrupt", "label": "Bed Bath & Beyond", "symbol": "BBBY"},
-]
-
-CACHE_DIR = Path("data/cache")
-OUT_DIR = Path("data/phase0")
+# Le moteur (liste d'entreprises + répertoire de sortie) est partagé avec
+# fetch_phase0 via resolve_run : trio + data/phase0/ par défaut, manifeste
+# + data/backtest/ en mode backtest. Même contrat pour les 4 scripts.
+from scripts.fetch_phase0 import CACHE_DIR, OUT_DIR, resolve_run
 
 # Colonnes de base de ratios.csv (fetch_phase0) — fetch_prices est
 # idempotent : on re-saute toujours à ces 7 colonnes avant d'ajouter les siennes.
@@ -99,6 +96,11 @@ def fetch_history(symbol: str, refresh: bool) -> dict | None:
         return None
     if resp.status_code == 404:
         return None  # symbole introuvable / purgé
+    if resp.status_code == 429 or resp.status_code >= 500:
+        # Rate-limit Yahoo / erreur serveur éphémère sur 800+ symboles :
+        # on signale et on passe (« donnée manquante » > faire tomber le lot).
+        print(f"  ! Yahoo {resp.status_code} pour {symbol} — prix ignoré")
+        return None
     resp.raise_for_status()
     payload = resp.json()
     if not payload.get("chart", {}).get("result"):
@@ -110,6 +112,9 @@ def fetch_history(symbol: str, refresh: bool) -> dict | None:
     if ts and len(ts) < 500 and ts[0] > time.time() - 3 * 365 * 86400:
         return None
     cache_file.write_text(json.dumps(payload), encoding="utf-8")
+    # Pollicité Yahoo : le SOMMEIL vit ICI (appel réseau réel) et non dans
+    # la boucle principale — un cache hit ne doit pas dormir 0,3 s × 875.
+    time.sleep(0.3)
     return payload
 
 
@@ -154,7 +159,7 @@ def raw_close(date: str, adj_close: float, splits: list[tuple[str, float]]) -> f
     return adj_close * factor
 
 
-def read_facts(slug: str) -> tuple[dict[int, dict[str, dict]], list[tuple[str, float]]]:
+def read_facts(slug: str, out_dir: Path) -> tuple[dict[int, dict[str, dict]], list[tuple[str, float]]]:
     """facts.csv -> ({année: {concept: {value, period_end}}}, [(date, valeur) des flottants]).
 
     Les flottants sont extraits en liste PLATTE car leur date (≈ 6 mois
@@ -162,7 +167,7 @@ def read_facts(slug: str) -> tuple[dict[int, dict[str, dict]], list[tuple[str, f
     fera « dernier flottant ≤ date de bilan ».
     """
     per_year: dict[int, dict[str, dict]] = {}
-    with (OUT_DIR / f"{slug}_facts.csv").open(encoding="utf-8") as f:
+    with (out_dir / f"{slug}_facts.csv").open(encoding="utf-8") as f:
         for row in csv.DictReader(f):
             per_year.setdefault(int(row["year"]), {})[row["concept"]] = {
                 "value": float(row["value"]),
@@ -177,26 +182,35 @@ def read_facts(slug: str) -> tuple[dict[int, dict[str, dict]], list[tuple[str, f
     return per_year, floats
 
 
-def read_ratios(slug: str) -> tuple[list[str], list[list[str]]]:
+def read_ratios(slug: str, out_dir: Path) -> tuple[list[str], list[list[str]]]:
     """En-tête + lignes, ramenés aux 7 colonnes de base (idempotent)."""
-    with (OUT_DIR / f"{slug}_ratios.csv").open(encoding="utf-8") as f:
+    with (out_dir / f"{slug}_ratios.csv").open(encoding="utf-8") as f:
         reader = csv.reader(f)
         header = next(reader)[:BASE_COLS]
         return header, [r[:BASE_COLS] for r in reader]
 
 
-def process(company: dict, refresh: bool) -> None:
+def process(company: dict, refresh: bool, out_dir: Path) -> None:
     slug = company["slug"]
-    symbol = company["symbol"]
-    print(f"\n=== {company['label']} ({symbol})")
+    # Le trio verrouillé utilise "symbol" ; le manifeste backtest utilise
+    # "ticker" (champ SEC). Le ticker Yahoo est le symbole SEC avec le
+    # point de classe remplacé par un tiret : BRK.B -> BRK-B (convention
+    # Yahoo, sinon 404).
+    symbol = (company.get("symbol") or company.get("ticker") or "").replace(".", "-")
+    print(f"\n=== {company['label']} ({symbol or 'sans ticker'})")
 
-    payload = fetch_history(symbol, refresh)
-    closes = daily_closes(payload)
-    splits = splits_after(payload)
-    dates = [d for d, _ in closes]
+    if not symbol:
+        # Pas de ticker coté connu (faillie delistée, ex. BBBY) : seul le
+        # flottant SEC peut valoriser — payload None = repli (b).
+        payload, closes, splits, dates = None, [], [], []
+    else:
+        payload = fetch_history(symbol, refresh)
+        closes = daily_closes(payload)
+        splits = splits_after(payload)
+        dates = [d for d, _ in closes]
 
-    facts, floats = read_facts(slug)
-    header, rows = read_ratios(slug)
+    facts, floats = read_facts(slug, out_dir)
+    header, rows = read_ratios(slug, out_dir)
     out_header = header + ADDED_COLS
     out_rows: list[list[str]] = []
     stats: dict[str, int] = {}
@@ -207,13 +221,17 @@ def process(company: dict, refresh: bool) -> None:
         y_facts = facts.get(year, {})
         ta = y_facts.get("total_assets")
         liab = y_facts.get("total_liabilities")
-        if not (ta and liab):
+        # Garde sur les VALEURS et non sur les nœuds : un dict non vide
+        # portant value=0 (coquille au bilan total, cas réel Lone Star Gold)
+        # rendrait D = cap/0 — « donnée manquante » plutôt qu'une division
+        # par zéro qui fait tomber le lot entier.
+        liab_value = liab["value"] if liab else 0.0
+        if not (ta and ta["value"]) or not liab_value:
             out_rows.append(r + ["", "", "", "", ""])
             stats["sans_bilan"] = stats.get("sans_bilan", 0) + 1
             continue
 
         balance_date = ta["period_end"]  # date du bilan = repère de valorisation
-        liab_value = liab["value"]
 
         # --- (a) cours Yahoo ≤ date de bilan, désajusté des splits -------
         price = None
@@ -272,28 +290,37 @@ def process(company: dict, refresh: bool) -> None:
         )
         stats[source] = stats.get(source, 0) + 1
 
-    with (OUT_DIR / f"{slug}_ratios.csv").open("w", newline="", encoding="utf-8") as f:
+    with (out_dir / f"{slug}_ratios.csv").open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(out_header)
         w.writerows(out_rows)
 
     print(f"  couverture: {dict(stats)}")
     # Contrôles : capitalisation des années repères (validation visuelle).
-    for probe in ("2013", "2014", "2021", "2022", "2023"):
-        for r in out_rows:
-            if r[0] == probe and r[5]:
-                # r = [year,A,B,C,E,D,Z] + [date,cours,cap,dettes,source]
-                print(
-                    f"  contrôle {probe}: date {r[-5]}, "
-                    f"cours {format(float(r[-4]), '.2f') if r[-4] else '—'}, "
-                    f"cap {r[-3]}, D={r[5]} ({r[-1]})"
-                )
+    # Réservés au trio : ×5 lignes × 875 entreprises = bruit inutile.
+    if out_dir == OUT_DIR:
+        for probe in ("2013", "2014", "2021", "2022", "2023"):
+            for r in out_rows:
+                if r[0] == probe and r[5]:
+                    # r = [year,A,B,C,E,D,Z] + [date,cours,cap,dettes,source]
+                    print(
+                        f"  contrôle {probe}: date {r[-5]}, "
+                        f"cours {format(float(r[-4]), '.2f') if r[-4] else '—'}, "
+                        f"cap {r[-3]}, D={r[5]} ({r[-1]})"
+                    )
 
 
 def main() -> None:
     refresh = "--refresh" in sys.argv
-    for company in COMPANIES:
-        process(company, refresh)
+    companies, out_dir = resolve_run()
+    for i, company in enumerate(companies, 1):
+        print(f"[{i}/{len(companies)}]", end="")
+        # Une entreprise bancale (passif nul, JSON Yahoo inattendu…) ne
+        # doit PAS tuer un lot de 875 : on signale et on passe au suivant.
+        try:
+            process(company, refresh, out_dir)
+        except Exception as exc:
+            print(f"\n  !! ERREUR {company['slug']}: {exc!r} — ignorée, prix non écrit")
     print(
         "\nD = valeur de marché / dettes totales book (voir source_D). "
         "Z reste à CALCULER À LA MAIN (gate phase 0)."
