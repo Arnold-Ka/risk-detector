@@ -15,7 +15,10 @@ scripts/fetch_prices.py (source_D) pour que Z(phase 0) et Z(nightly) disent
 la même chose :
   a) cours ≤ date de bilan (à 14 j près — c'est la « date_valeur » stockée)
      × parts de couverture (dei) ;
-  b) sinon dernier flottant SEC ≤ date de bilan (dans les 12 mois) ;
+   b) sinon dernier flottant SEC ≤ date de bilan (dans les 12 mois),
+      écarté s'il est hors d'échelle face aux autres flottants de
+      l'entreprise (erreur de facteur 1000 ou flottant à 0 — cf.
+      _float_is_plausible) ;
   c) sinon cours × parts pondérées moyennes ;
   d) sinon capitalisation absente -> Altman non calculable (None).
 
@@ -25,6 +28,7 @@ plusieurs dates de fin dans une même année (AMC 2018) => la date la plus
 tardive gagne (tri croissant + écrasement), exactement comme la phase 0.
 """
 
+import statistics
 from datetime import date
 
 from app.signals import (
@@ -50,6 +54,11 @@ PRICE_MAX_AGE_DAYS = 14
 # Flottant SEC utilisable s'il date de moins de 12 mois (mesuré ~6 mois
 # avant le bilan pour un exercice civil ; ~0 mois pour décalé).
 FLOAT_MAX_AGE_DAYS = 365
+# Un flottant déclaré n'est retenu que s'il reste dans un facteur 100 de
+# la médiane des autres déclarations de l'entreprise (voir
+# _float_is_plausible) : au-delà, c'est une erreur d'échelle du
+# télédéclarant, pas un marché qui s'effondre.
+FLOAT_MAGNITUDE_TOL = 100.0
 
 
 def build_years(rows: list[dict]) -> dict[int, dict[str, dict]]:
@@ -106,16 +115,58 @@ def _price_on_or_before(prices: list[tuple[str, float]], balance_date: str) -> f
     return best
 
 
+def _float_is_plausible(value: float, others: list[float]) -> bool:
+    """Le flottant déclaré est-il du bon ordre de grandeur ?
+
+    Erreurs mesurées dans la base avant ce garde-fou :
+      - NDSN 2018 : public_float = 7 441 507 $ (7,4 M$ au lieu de 7,4
+        Md$ — le télédéclarant a oublié le facteur 1000), ADI 2012
+        pareil (9 664 000 au lieu de 9,7 Md$) ;
+      - des flottants à 0 (LITE, CEPL…) donnaient D = 0 dans l'Altman :
+        76 signaux en fausse « défaillance » mesurés.
+
+    Un vrai flottant ne s'écarte pas d'un facteur 100 de la médiane des
+    autres déclarations de la MÊME entreprise — une erreur d'échelle, si
+    (facteur 1000 typique, ou 0). Le candidat écarté laisse parler la
+    chaîne de repli (cours × parts pondérées) ou l'absence de
+    capitalisation : règle produit « donnée manquante > faux score ».
+
+    Pas de comparaison (autres valeurs absentes ou nulles) => on ne peut
+    pas juger : un positif unique est accepté tel quel.
+    """
+    if value <= 0:
+        return False
+    positives = [v for v in others if v > 0]
+    if not positives:
+        return True
+    median = statistics.median(positives)
+    ratio = value / median
+    return 1 / FLOAT_MAGNITUDE_TOL <= ratio <= FLOAT_MAGNITUDE_TOL
+
+
 def _latest_float(floats: list[tuple[str, float]], balance_date: str) -> float | None:
-    """Dernier flottant SEC ≤ date de bilan, d'au plus 12 mois."""
+    """Dernier flottant SEC ≤ date de bilan, d'au plus 12 mois.
+
+    Le candidat retenu doit passer _float_is_plausible face aux autres
+    flottants de l'entreprise (toutes années, futur compris : c'est un
+    contrôle d'échelle de la DÉCLARATION, pas une info financière — seul
+    le montant candidat, lui, reste cantonné ≤ date de bilan).
+    """
     bd = date.fromisoformat(balance_date)
     best: float | None = None
-    for d, value in floats:
+    best_idx = -1
+    for i, (d, value) in enumerate(floats):
         dd = date.fromisoformat(d)
         if dd > bd:
             break
         if (bd - dd).days <= FLOAT_MAX_AGE_DAYS:
             best = value
+            best_idx = i
+    if best is None:
+        return None
+    others = [v for i, (_d, v) in enumerate(floats) if i != best_idx]
+    if not _float_is_plausible(best, others):
+        return None
     return best
 
 
