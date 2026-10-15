@@ -27,6 +27,7 @@ import {
   SIGNAL_LABELS,
   SIGNAL_ORDER,
   absentSignals,
+  attributionOf,
   badgeClass,
   formatValue,
 } from "@/lib/signals";
@@ -170,6 +171,43 @@ async function CompanySection({
                 <p className="mt-1 text-sm text-gray-500">
                   {SIGNAL_HINTS[signal.signal_type]}
                 </p>
+                {/* Attribution SHAP (lstm uniquement) : les variables qui
+                    pèsent le plus sur le score — détail des top-k
+                    précalculés par app/dl/attribution (details.attribution).
+                    Rouge = tire vers la faillite, vert = l'éloigne. */}
+                {signal.signal_type === "lstm" &&
+                  attributionOf(signal).length > 0 && (
+                    <div className="mt-2 rounded-lg bg-gray-50 p-3">
+                      <p className="text-xs font-medium text-gray-500">
+                        Variables les plus influentes sur ce score
+                        {" "}(fenêtre des derniers exercices)
+                      </p>
+                      <ul className="mt-1.5 space-y-1">
+                        {attributionOf(signal).map((item) => (
+                          <li
+                            key={item.label}
+                            className="flex items-center justify-between gap-3 text-xs"
+                          >
+                            <span className="text-gray-700">{item.label}</span>
+                            <span
+                              className={
+                                item.value >= 0
+                                  ? "font-medium text-red-600"
+                                  : "font-medium text-green-700"
+                              }
+                            >
+                              {item.value >= 0 ? "+" : ""}
+                              {item.value.toFixed(3)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-1.5 text-[11px] text-gray-400">
+                        Contribution au logit de faillite (SHAP, somme sur la
+                        fenêtre) : positive = élève le score de risque.
+                      </p>
+                    </div>
+                  )}
                 {signal.filing_url && (
                   <a
                     href={signal.filing_url}

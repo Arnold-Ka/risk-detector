@@ -34,6 +34,7 @@ from pathlib import Path
 import torch
 
 from app.db.repo import fetch_event_rows
+from app.dl import attribution
 from app.dl.dataset import (
     INPUT_DIM,
     MIN_YEARS,
@@ -180,6 +181,21 @@ def sample_signals(
         if entry is None:
             continue  # exercice non traçable -> signal omis
         results.append(build_signal(prob, sample, entry[1], meta))
+    # Attribution (phase 2 « explication par variable ») : seulement sur
+    # le DERNIER score — c'est celui que la fiche présente comme état
+    # courant ; l'historique garde des détails légers. Échec de SHAP ->
+    # le signal reste affiché sans explication (bonus de lisibilité,
+    # jamais un prérequis du score).
+    if results:
+        try:
+            attr = attribution.explain(model, samples[-1])
+            results[-1].details["attribution_method"] = "shap_gradient"
+            results[-1].details["attribution"] = [
+                {"feature": name, "value": round(value, 5)}
+                for name, value in attribution.top_contributors(attr)
+            ]
+        except Exception:
+            pass
     return results
 
 

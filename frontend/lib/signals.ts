@@ -115,3 +115,68 @@ export function absentSignals(signal: Signal | undefined): string[] {
     .filter((name): name is string => typeof name === "string")
     .map((name) => SIGNAL_LABELS[name as SignalType] ?? name);
 }
+
+// --- Attribution SHAP du signal LSTM (« explication par variable ») ---------
+// Clés = identifiants anglais des features du modèle (app/dl/attribution,
+// ordre exact de dataset.vectorize) ; valeurs = libellés FR affichés.
+
+export const FEATURE_LABELS: Record<string, string> = {
+  cash: "Trésorerie",
+  cfo: "Cash-flow opérationnel",
+  current_assets: "Actifs circulants",
+  current_liabilities: "Dettes circulantes",
+  depreciation: "Amortissements",
+  gross_profit: "Résultat brut",
+  interest_expense: "Charges d'intérêts",
+  inventory: "Stocks",
+  long_term_debt: "Dettes long terme",
+  net_income: "Résultat net",
+  operating_income: "Résultat d'exploitation",
+  ppe: "Immobilisations corporelles",
+  receivables: "Créances clients",
+  retained_earnings: "Résultats accumulés",
+  sales: "Chiffre d'affaires",
+  sga: "Frais généraux (SG&A)",
+  stockholders_equity: "Capitaux propres",
+  total_liabilities: "Dettes totales",
+  critical_defaillance: "8-K critiques (faillite, défaut, comptes corrigés)",
+  critical_vigilance: "8-K de surveillance (changement d'auditeur, dirigeant)",
+  late_filing: "Rapports déposés en retard (formulaires NT)",
+  events_missing: "Absence de données de dépôts",
+};
+
+/** Identifiant de feature -> libellé FR (suffixes ratio/manquant gérés). */
+export function featureLabel(feature: string): string {
+  if (feature.endsWith("_missing")) {
+    const base = FEATURE_LABELS[feature.slice(0, -"_missing".length)];
+    return `${base ?? feature.slice(0, -"_missing".length)} (manquant)`;
+  }
+  if (feature.endsWith("_ratio")) {
+    const base = FEATURE_LABELS[feature.slice(0, -"_ratio".length)];
+    return base ?? feature.slice(0, -"_ratio".length);
+  }
+  return FEATURE_LABELS[feature] ?? feature;
+}
+
+/**
+ * Attribution SHAP du signal LSTM (top-k dans details.attribution) ->
+ * [{label, value}] prêt à afficher ; [] si absente (historique, échec
+ * SHAP, autre type de signal).
+ */
+export function attributionOf(
+  signal: Signal | undefined,
+): { label: string; value: number }[] {
+  const raw = signal?.details?.["attribution"];
+  if (!Array.isArray(raw)) return [];
+  const out: { label: string; value: number }[] = [];
+  for (const item of raw) {
+    if (item && typeof item === "object") {
+      const feature = (item as { feature?: unknown }).feature;
+      const value = (item as { value?: unknown }).value;
+      if (typeof feature === "string" && typeof value === "number") {
+        out.push({ label: featureLabel(feature), value });
+      }
+    }
+  }
+  return out;
+}
