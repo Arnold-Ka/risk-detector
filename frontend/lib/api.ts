@@ -129,6 +129,40 @@ export async function searchCompanies(query: string): Promise<SearchState> {
   }
 }
 
+// Identité d'entreprise sans signaux (GET /companies) — sert le sitemap
+// (§7 : pages publiques indexables) qui doit énumérer les CIK. L'identifiant
+// public est le CIK ; l'uuid interne de la table companies n'est pas exposé.
+export type CompanyRef = {
+  cik: number;
+  name: string;
+  ticker: string | null;
+  sector_group: string | null;
+};
+
+export type CompanyListResult =
+  | { state: "ready"; results: CompanyRef[] }
+  | { state: "error"; message: string };
+
+export async function fetchCompanyList(): Promise<CompanyListResult> {
+  try {
+    const res = await fetch(`${BASE}/companies`);
+    if (!res.ok) {
+      return {
+        state: "error",
+        message: `L'API a répondu ${res.status} pour la liste des entreprises.`,
+      };
+    }
+    return { state: "ready", results: (await res.json()) as CompanyRef[] };
+  } catch {
+    return {
+      state: "error",
+      message:
+        "Impossible de joindre l'API. " +
+        "Lancez le backend : uv run uvicorn app.api.main:app --reload",
+    };
+  }
+}
+
 // Historique complet des signaux (GET /companies/{cik}/signals) — sert le
 // graphique d'évolution 5 ans de la fiche (feuille de route §9).
 export type HistoryResult =

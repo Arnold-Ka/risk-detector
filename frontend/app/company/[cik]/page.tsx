@@ -33,13 +33,33 @@ import {
 } from "@/lib/signals";
 import ScoreChart from "./score-chart";
 
-// Titre dynamique pour le SEO : la page entreprise doit être indexable
-// (feuille de route §7 : pages publiques = trafic gratuit et durable).
+// Titre/description dynamiques pour le SEO (feuille de route §7 : pages
+// publiques = trafic gratuit et durable) — le nom de l'entreprise EST la
+// requête des utilisateurs, pas son CIK. Le fetch company est le même que
+// celui du corps de page (non caché, cf. lib/api.ts) : deux appels internes
+// par requête, sans dépendance de cache périmé entre métadonnées et contenu.
 export async function generateMetadata(
   props: PageProps<"/company/[cik]">,
 ): Promise<Metadata> {
   const { cik } = await props.params;
-  return { title: `Fiche de risque — CIK ${cik}` };
+  const result = await fetchCompany(Number(cik));
+
+  if (result.state !== "ready") {
+    // Erreur API ou CIK inconnu : titre de repli au CIK — jamais de nom
+    // inventé pour une entreprise qu'on n'a pas pu charger.
+    return { title: `Fiche de risque — CIK ${cik}` };
+  }
+
+  const { name, ticker, signals } = result.company;
+  const composite = signals.find((s) => s.signal_type === "composite");
+  const displayName = ticker ? `${name} (${ticker})` : name;
+  return {
+    title: `${displayName} — Fiche de risque`,
+    description: composite
+      ? `Score de risque global : ${composite.severity}. Signaux financiers (Altman, Piotroski, événements SEC…) reliés aux dépôts sources. Information générale, pas un conseil en investissement.`
+      : `Signaux financiers (Altman, Piotroski, événements SEC…) reliés aux dépôts sources. Information générale, pas un conseil en investissement.`,
+    alternates: { canonical: `/company/${cik}` },
+  };
 }
 
 export default function CompanyPage(props: PageProps<"/company/[cik]">) {

@@ -75,6 +75,33 @@ def test_search_requires_non_empty_query():
     assert client.get("/search", params={"q": "   "}).json() == []
 
 
+def test_companies_list_returns_public_refs():
+    """GET /companies : liste d'identité pour le sitemap (skip sans base).
+
+    Le sitemap du frontend (§7, pages publiques indexables) doit énumérer
+    les CIK sans requête de recherche — cet endpoint en est la source.
+    L'uuid interne de la table companies ne doit PAS fuyer : l'identifiant
+    public est le CIK.
+    """
+    import pytest
+
+    if not _db_available():
+        pytest.skip("PostgreSQL indisponible")
+    resp = client.get("/companies")
+    assert resp.status_code == 200
+    body = resp.json()
+    if not body:
+        pytest.skip("données non ingérées — uv run python -m scripts.load_postgres")
+    assert isinstance(body, list)
+    for row in body:
+        assert isinstance(row["cik"], int) and row["cik"] > 0
+        assert row["name"]
+        assert set(row) == {"cik", "name", "ticker", "sector_group"}
+    # Le trio de référence doit y figurer (cohorte de phase 0).
+    ciks = {row["cik"] for row in body}
+    assert {320193, 1411579, 886158} <= ciks
+
+
 def test_company_unknown_cik_returns_404():
     """CIK inconnu -> 404 (pas un objet vide qui ressemblerait à « sain »)."""
     if not _db_available():

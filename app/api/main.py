@@ -18,6 +18,7 @@ from app.db.repo import (
     get_company,
     get_conn,
     latest_signals,
+    list_companies,
     search_companies,
     signal_history,
 )
@@ -55,6 +56,35 @@ def search(q: str = Query(min_length=1, max_length=100)):
     conn = get_conn()
     try:
         return search_companies(conn, query)
+    finally:
+        conn.close()
+
+
+@app.get("/companies")
+def list_companies_endpoint():
+    """Liste de toutes les entreprises suivies (identité seule, pas de signaux).
+
+    Sert le sitemap du frontend (feuille de route §7 : « pages publiques par
+    entreprise, indexables par Google ») — chaque fiche /company/{cik} doit
+    apparaître dans sitemap.xml, ce qui exige d'énumérer les CIK sans passer
+    par la recherche (qui exige une requête `q`). Léger volontairement :
+    ~875 lignes d'identité ; l'identifiant public est le CIK (pas l'uuid
+    interne de la table companies, qui n'est pas exposé par l'API).
+
+    Note : enregistré avant /companies/{cik} pour la lisibilité — FastAPI
+    distingue les routes par structure de chemin, pas par ordre.
+    """
+    conn = get_conn()
+    try:
+        return [
+            {
+                "cik": row["cik"],
+                "name": row["name"],
+                "ticker": row["ticker"],
+                "sector_group": row["sector_group"],
+            }
+            for row in list_companies(conn)
+        ]
     finally:
         conn.close()
 

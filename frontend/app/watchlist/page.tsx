@@ -1,5 +1,15 @@
 // Liste de suivi — placeholder jusqu'à la phase 2 (comptes utilisateurs +
 // table watchlists, feuille de route §7). Page server component statique.
+//
+// noindex : page vide = contenu mince, les moteurs ne doivent pas
+// l'indexer (elle est aussi exclue de sitemap.ts).
+
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Ma liste de suivi",
+  robots: { index: false },
+};
 
 export default function WatchlistPage() {
   return (
