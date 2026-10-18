@@ -56,6 +56,13 @@ def test_evaluate_fallback_shares_and_strict_none():
     assert evaluate(sales, None, None, "2020-12-31", "anchor") is None
 
 
+def test_evaluate_shares_below_floor_is_strict_none():
+    # Parts « 735 » (Southwest 2008 declaree en millions) : le repli
+    # parts ferait exploser le ratio -> strict-None (common.py SHARES_FLOOR).
+    sales = [{**SALE, "value": None, "shares": 180_000.0}]
+    assert evaluate(sales, None, 735.0, "2008-12-31", "anchor") is None
+
+
 def test_evaluate_traces_worst_filing():
     sales = [
         {**SALE, "value": 50.0, "filing_id": "small"},
@@ -67,18 +74,20 @@ def test_evaluate_traces_worst_filing():
 
 def _mini_rows():
     # Exercice 2020 avec tout le necessaire pour cap = price x dei.
+    # Parts a l'echelle reelle (> SHARES_FLOOR = 100 k, common.py) :
+    # un fixture « 100 parts » serait rejete par le garde-fou.
     base = {"period_end": "2020-12-31", "filing_id": "k1"}
     return [
         {**base, "concept": "total_assets", "value": 1000.0},
-        {**base, "concept": "shares_outstanding", "value": 100.0},
+        {**base, "concept": "shares_outstanding", "value": 100_000.0},
         {**base, "concept": "cash", "value": 100.0},
         {**base, "concept": "sales", "value": 500.0},
     ]
 
 
 def test_compute_company_wires_insider_signal():
-    # cap = cours 10 x 100 parts = 1 000 $ ; vente 5 x 10 $ = 50 $ -> 5 %.
-    sale = {**SALE, "shares": 5.0, "price": 10.0, "value": 50.0,
+    # cap = cours 10 x 100 000 parts = 1 M$ ; vente 50 000 $ -> 5 %.
+    sale = {**SALE, "shares": 5_000.0, "price": 10.0, "value": 50_000.0,
             "transaction_date": "2020-06-01", "filed_at": "2020-06-02"}
     results = compute_company(
         _mini_rows(),

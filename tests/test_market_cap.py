@@ -91,3 +91,70 @@ def test_dei_chain_wins_even_if_float_is_bogus():
 def test_no_balance_sheet_returns_none():
     """Sans total_assets : pas de date de bilan -> None (pas de calcul)."""
     assert market_capitalisation({}, [("2018-04-30", 7e9)], []) == (None, None)
+
+
+# --- Planchers absolus parts/flottant (common.py) ----------------------------
+# Erreurs mesurées : Southwest 2008 parts « 735 » (declarees en millions),
+# PG&E 2009 shares/float = 12345 (valeur de test du teledeclarant).
+
+
+def test_millions_declared_shares_rejected_by_chain():
+    """Parts « 735 » (millions non convertis) -> repli flottant, jamais (a)."""
+    cur = _cur(shares_outstanding=_node(735.0))
+    floats = [("2018-04-30", 6.3e9), ("2017-04-30", 5.9e9)]
+    prices = [("2018-10-31", 8.62)]
+    cap, src = market_capitalisation(cur, floats, prices)
+    assert (cap, src) == (6.3e9, "flottant_sec")
+
+
+def test_tiny_test_value_shares_and_float_rejected():
+    """PG&E 2009 : parts ET flottant à 12345 -> None (donnee manquante)."""
+    cur = _cur(shares_outstanding=_node(12_345.0))
+    floats = [("2009-06-30", 12_345.0)]
+    prices = [("2009-12-31", 44.65)]
+    assert market_capitalisation(cur, floats, prices) == (None, None)
+
+
+def test_wavg_floor_also_applies():
+    """Le plancher parts vaut aussi pour les parts pondérées (source (c))."""
+    cur = _cur(shares_weighted_basic=_node(500.0))
+    assert market_capitalisation(cur, [], [("2018-10-31", 44.65)]) == (None, None)
+
+
+def test_shares_floor_keeps_real_smallcaps():
+    """Nano-cap reel (>= 100 k parts) : la source (a) reste validee."""
+    cur = _cur(shares_outstanding=_node(150_000.0))
+    prices = [("2018-10-31", 2.0)]
+    cap, src = market_capitalisation(cur, [], prices)
+    assert (cap, src) == (2.0 * 150_000.0, "yahoo+dei")
+
+
+def test_thousands_declared_shares_rejected_by_relative_guard():
+    """RMD 2021 (cas mesure) : « 149 638 » declare en milliers vs la
+    serie reellement ~146 M -> echelle relative ejecte, repli flottant."""
+    cur = _cur(
+        total_assets=_node(1e10, "2021-06-30"),
+        shares_outstanding=_node(149_638.0, "2021-06-30"),
+    )
+    history = [
+        ("2019-06-30", 143_000_000.0),
+        ("2020-06-30", 146_000_000.0),
+        ("2021-06-30", 149_638.0),
+        ("2022-06-30", 147_000_000.0),
+    ]
+    floats = [("2020-12-31", 2.1e10)]  # <= 12 mois avant le bilan 2021-06-30
+    cap, src = market_capitalisation(cur, floats, [], history)
+    assert (cap, src) == (2.1e10, "flottant_sec")
+
+
+def test_regular_shares_accepted_by_relative_guard():
+    """Parts dans la serie (~146 M) : source (a) validee avec historique."""
+    cur = _cur(shares_outstanding=_node(147_000_000.0, "2021-06-30"))
+    history = [
+        ("2019-06-30", 143_000_000.0),
+        ("2020-06-30", 146_000_000.0),
+        ("2021-06-30", 147_000_000.0),
+    ]
+    prices = [("2018-10-31", 200.0)]
+    cap, src = market_capitalisation(cur, [], prices, history)
+    assert (cap, src) == (200.0 * 147_000_000.0, "yahoo+dei")

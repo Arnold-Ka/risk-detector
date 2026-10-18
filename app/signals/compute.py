@@ -40,7 +40,7 @@ from app.signals import (
     piotroski,
     runway,
 )
-from app.signals.common import SignalResult
+from app.signals.common import FLOAT_FLOOR, SHARES_FLOOR, SignalResult
 from app.signals.events import (
     assign_to_years,
     evaluate_critical_8k,
@@ -59,6 +59,11 @@ FLOAT_MAX_AGE_DAYS = 365
 # _float_is_plausible) : au-delà, c'est une erreur d'échelle du
 # télédéclarant, pas un marché qui s'effondre.
 FLOAT_MAGNITUDE_TOL = 100.0
+# Même règle pour les parts de couverture (voir _shares_are_plausible) :
+# erreur mesurée RMD 2021 = « 149 638 » (déclaré en milliers, soit les
+# 149,6 M réels) — au-delà d'un facteur 100 vs les autres exercices de la
+# MÊME entreprise, c'est une erreur d'échelle, pas une émission massive.
+SHARES_MAGNITUDE_TOL = 100.0
 
 
 def build_years(rows: list[dict]) -> dict[int, dict[str, dict]]:
@@ -134,7 +139,10 @@ def _float_is_plausible(value: float, others: list[float]) -> bool:
     Pas de comparaison (autres valeurs absentes ou nulles) => on ne peut
     pas juger : un positif unique est accepté tel quel.
     """
-    if value <= 0:
+    if value <= 0 or value < FLOAT_FLOOR:
+        # Plancher ABSOLU (common.py) : un flottant < 100 k$ est soit une
+        # coquille sans marché, soit une erreur d'échelle (PG&E 12345 $) —
+        # jamais le flottant d'une société cotée digne de ce nom.
         return False
     positives = [v for v in others if v > 0]
     if not positives:
@@ -170,15 +178,69 @@ def _latest_float(floats: list[tuple[str, float]], balance_date: str) -> float |
     return best
 
 
+def _shares_are_plausible(value: float, others: list[float]) -> bool:
+    """Parts de couverture au bon ordre de grandeur (miroir du flottant).
+
+    Erreur mesurée dans la base avant ce garde-fou : RMD (ResMed) 2021 =
+    149 638 parts déclarées EN MILLIERS (les 149,6 M réels) → cap
+    35,9 M$ au lieu de ~30 Md$, ratio « ventes dirigeants » = 1,22 (fausse
+    défaillance sur une société saine). Le plancher ABSOLU (SHARES_FLOOR)
+    ne suffit pas : 149 638 > 100 000. La comparaison aux AUTRES
+    exercices de la même entreprise (facteur 100) tranche : un vrai flottant
+    de parts ne s'écarte pas d'un facteur 100 sur la série — une erreur
+    d'échelle, si (facteur 1000 ou 100000). Ligne sans comparaison =>
+    plancher absolu seul (règle identique à _float_is_plausible).
+
+    Exception assumée : une dilution explosive réelle (type reverse split
+    + 100x en 2 ans) serait écartée → repli flottant, sinon None —
+    « donnée manquante > faux score » reste la règle produit.
+    """
+    if value < SHARES_FLOOR:
+        return False
+    positives = [v for v in others if v > 0]
+    if not positives:
+        return True
+    median = statistics.median(positives)
+    ratio = value / median
+    return 1 / SHARES_MAGNITUDE_TOL <= ratio <= SHARES_MAGNITUDE_TOL
+
+
+def plausible_shares(
+    cur: dict, shares_history: list[tuple[str, float]] | None
+) -> float | None:
+    """Parts de couverture plausibles de l'exercice, ou None.
+
+    Source unique de la règle (plancher + échelle relative) : utilisée par
+    la chaîne de capitalisation ET par le repli parts du signal insiders,
+    pour qu'un seul miroir juge les parts. `shares_history` = toutes les
+    déclarations de parts de l'entreprise [(period_end, value)], le
+    candidat exclu par sa propre date.
+    """
+    node = cur.get("shares_outstanding")
+    if not node:
+        return None
+    others = [
+        v for pe, v in (shares_history or []) if pe != node["period_end"]
+    ]
+    value = float(node["value"])
+    return value if _shares_are_plausible(value, others) else None
+
+
 def market_capitalisation(
     cur: dict,
     floats: list[tuple[str, float]],
     prices: list[tuple[str, float]],
+    shares_history: list[tuple[str, float]] | None = None,
 ) -> tuple[float | None, str | None]:
     """(capitalisation, source) pour l'exercice — miroir de fetch_prices.
 
     Retourne (None, None) quand aucune source ne s'applique : Altman sera
     alors non calculable, jamais valorisé avec un chiffre inventé.
+    Écart assumé avec le CSV de phase 0 (fetch_prices) : ici les parts et
+    le flottant passent les garde-fous d'échelle (common.py SHARES_FLOOR +
+    _shares_are_plausible / _float_is_plausible) — mesurés sur les données
+    de la cohorte, le CSV garde la chaîne naïve (document de gate, pas le
+    produit).
     """
     ta = cur.get("total_assets")
     if not ta:
@@ -186,15 +248,21 @@ def market_capitalisation(
     balance_date = ta["period_end"]
 
     price = _price_on_or_before(prices, balance_date)
-    dei = _v(cur, "shares_outstanding")
+    # Parts de couverture (a) : garde-fou plancher + échelle relative aux
+    # autres exercices (erreurs mesurées : Southwest « 735 » en millions,
+    # PG&E « 12345 » de test, RMD « 149 638 » en milliers).
+    dei = plausible_shares(cur, shares_history)
     wavg = _v(cur, "shares_weighted_basic")
+    # Parts pondérées (c) : plancher absolu seul — pas d'histoire dédiée
+    # (repli rare, le plancher attrape les valeurs absurdes).
+    wavg_ok = wavg is not None and wavg >= SHARES_FLOOR
 
     if price and dei:
         return price * dei, "yahoo+dei"
     flottant = _latest_float(floats, balance_date)
     if flottant is not None:
         return flottant, "flottant_sec"
-    if price and wavg:
+    if price and wavg_ok:
         return price * wavg, "yahoo+parts_ponderees"
     return None, None
 
@@ -233,6 +301,15 @@ def compute_company(
         for concept, node in year_node.items()
         if concept == "public_float"
     )
+    # Historique des parts de couverture : sert au garde-fou d'échelle
+    # relatif (_shares_are_plausible) — un candidat qui s'écarte d'un
+    # facteur 100 des AUTRES exercices est une erreur de déclaration.
+    shares_history = sorted(
+        (node["period_end"], node["value"])
+        for year_node in years.values()
+        for concept, node in year_node.items()
+        if concept == "shares_outstanding"
+    )
     prices = sorted(prices)
 
     # L'écart bénéfice/cash a besoin de l'historique complet (streak) :
@@ -269,7 +346,7 @@ def compute_company(
         year_results: list[SignalResult] = []
 
         # --- Altman ---------------------------------------------------------
-        cap, cap_source = market_capitalisation(cur, floats, prices)
+        cap, cap_source = market_capitalisation(cur, floats, prices, shares_history)
         ca, cl = _v(cur, "current_assets"), _v(cur, "current_liabilities")
         wc = (ca - cl) if (ca is not None and cl is not None) else None
         res = altman.evaluate(
@@ -324,16 +401,17 @@ def compute_company(
             )
 
         # --- Ventes de dirigeants (Form 4, §2 « ventes massives ») -------
-        # cap (capitalisation) et shares_outstanding sont déjà calculés
-        # pour Altman : le signal insiders réutilise les MÊMES valeurs —
-        # un seul miroir de la chaîne de repli de valorisation.
+        # cap (capitalisation) et parts plausibles sont déjà calculés pour
+        # Altman : le signal insiders réutilise les MÊMES valeurs — un seul
+        # miroir de la chaîne de repli de valorisation (parts soumises au
+        # même garde-fou d'échelle, sinon le repli exploserait le ratio).
         if insiders_rows is not None:
             year_txs = insiders_by_year.get(year, [])
             sales = [t for t in year_txs if is_open_sale(t)]
             res = insiders.evaluate(
                 sales,
                 market_capitalisation=cap,
-                shares_outstanding=_v(cur, "shares_outstanding"),
+                shares_outstanding=plausible_shares(cur, shares_history),
                 period_end=period_end,
                 filing_id=filing_id,
             )

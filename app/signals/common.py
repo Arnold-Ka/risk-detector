@@ -31,6 +31,21 @@ LEVEL_CRITICAL = "critique"
 SEVERITIES = (SEV_OK, SEV_WATCH, SEV_ALERT)
 LEVELS = (LEVEL_LOW, LEVEL_MEDIUM, LEVEL_HIGH, LEVEL_CRITICAL)
 
+# --- Planschers absolus de plausibilité (qualité des données) ---------------
+# Erreurs d'échelle MESURÉES dans la base, même famille que les flottants
+# NDSN/ADI (garde-fou relatif dans signals/compute._float_is_plausible) :
+#   - PG&E 2009 : shares_outstanding = public_float = 12345 — le
+#     télédéclarant a soumis une valeur de test ; cap = 44,65 $ x 12 345
+#     = 551 k$ au lieu de ~20 Md$ (ratio « ventes dirigeants » = 11,4) ;
+#   - Southwest 2008 : parts déclarées EN MILLIONS (735 au lieu de 735
+#     M) -> cap 6 336 $ au lieu de 6,3 Md$ (ratio = 394 !).
+# Un plancher ABSOLU est sans faux positif sur une société cotée réelle
+# (les standards de cotation exigent ~1 M de parts publiques) — seul le
+# déclarant en erreur passe en dessous. Rejeté -> repli de la chaîne de
+# capitalisation, sinon strict-None (« donnée manquante > faux score »).
+SHARES_FLOOR = 100_000.0  # parts : en dessous = déclaration en millions/kilos
+FLOAT_FLOOR = 100_000.0   # $ de flottant : en dessous = coquille ou erreur
+
 
 @dataclass
 class SignalResult:

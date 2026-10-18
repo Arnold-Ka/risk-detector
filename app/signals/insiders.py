@@ -25,7 +25,13 @@ inventé. 0 vente = signal « saine » (la courbe continue, le zéro est
 vrai puisqu'on a bien regardé les Form 4 de l'exercice).
 """
 
-from app.signals.common import SEV_ALERT, SEV_OK, SEV_WATCH, SignalResult
+from app.signals.common import (
+    SEV_ALERT,
+    SEV_OK,
+    SEV_WATCH,
+    SHARES_FLOOR,
+    SignalResult,
+)
 
 # Code EDGAR de vente sur marché ouverte (choix du vendeur).
 SELL_CODE = "S"
@@ -78,15 +84,18 @@ def evaluate(
         ratio = sold_value / market_capitalisation
         denominator = "capitalisation"
         denominator_value = float(market_capitalisation)
-    elif shares_outstanding:
+    elif shares_outstanding and shares_outstanding >= SHARES_FLOOR:
         # Fallback : parts vendues / parts en circulation (le prix se
         # simplifie quand il est homogène — approximatif si prix variables,
         # mais honnête : la provenance est tracée dans denominator).
+        # Même plancher parts que la chaîne de capitalisation (common.py) :
+        # des parts déclarées en millions (Southwest 735) feraient
+        # exploser le ratio — strict-None plutôt que faux score.
         ratio = sold_shares / float(shares_outstanding)
         denominator = "actions_en_circulation"
         denominator_value = float(shares_outstanding)
     else:
-        # Aucun dénominateur : strict-None (donnée manquante).
+        # Aucun dénominateur usable : strict-None (donnée manquante).
         return None
 
     if ratio >= ALERT_RATIO:
