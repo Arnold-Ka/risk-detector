@@ -282,10 +282,11 @@ def test_composite_half_alerts_is_high():
     assert res.value == pytest.approx(1.0)
     assert res.severity == "élevé"
     # Absents = poids connus mais sévérité non fournie ce-là (composite
-    # pondère 8 signaux depuis l'ajout des ventes de dirigeants).
+    # pondère 10 signaux depuis l'ajout des ventes de dirigeants puis des
+    # deux signaux V2 dette/dilution).
     assert set(res.details["absent"]) == {
         "beneish", "divergence", "runway", "late_filing", "critical_8k",
-        "insider_sales",
+        "insider_sales", "net_debt_ebitda", "dilution",
     }
 
 

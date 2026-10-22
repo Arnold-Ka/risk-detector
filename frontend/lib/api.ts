@@ -45,6 +45,8 @@ export type SignalType =
   | "late_filing"
   | "critical_8k"
   | "insider_sales"
+  | "net_debt_ebitda"
+  | "dilution"
   | "lstm"
   | "composite";
 

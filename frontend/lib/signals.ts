@@ -16,6 +16,8 @@ export const SIGNAL_ORDER: SignalType[] = [
   "late_filing",
   "critical_8k",
   "insider_sales",
+  "net_debt_ebitda",
+  "dilution",
   "lstm",
 ];
 
@@ -29,6 +31,8 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   late_filing: "Dépôts en retard",
   critical_8k: "8-K critiques",
   insider_sales: "Ventes de dirigeants",
+  net_debt_ebitda: "Dette nette / EBITDA",
+  dilution: "Dilution d'actions",
   lstm: "Modèle séquentiel (LSTM)",
 };
 
@@ -52,6 +56,10 @@ export const SIGNAL_HINTS: Record<SignalType, string> = {
     "Événements graves annoncés en 8-K : faillite, défaut de dette, comptes corrigés, changement d'auditeur, départ de dirigeant.",
   insider_sales:
     "Part des actions vendues par les dirigeants (officiers, administrateurs) sur un an. Au-dessus de 0,25 % du capital = vigilance, 1 % = défaillance.",
+  net_debt_ebitda:
+    "Dette long terme moins la trésorerie, rapportée au cash-flow brut généré. Au-dessus de 4 et en hausse = alerte de la feuille de route.",
+  dilution:
+    "Augmentation du nombre d'actions sur un an. Plus de 10 % = alerte, plus de 5 % = vigilance : les actionnaires sont dilués.",
   lstm:
     "Probabilité de faillite dans les 12 mois estimée par un modèle d'apprentissage profond sur les 3 à 5 derniers exercices (ratios comptables et événements de dépôt).",
 };
@@ -77,7 +85,13 @@ export function badgeClass(severity: Severity | Level | string): string {
 
 /** Formatage de la valeur selon le type (null = donnée manquante). */
 export function formatValue(type: SignalType, value: number | null): string {
-  if (value === null) return "donnée manquante";
+  if (value === null) {
+    // Valeur absente avec une EXISTENCE du signal : EBITDA ≤ 0 (la
+    // sévérité est calculable, le ratio n'est pas — cf. leverage.py).
+    return type === "net_debt_ebitda"
+      ? "EBITDA ≤ 0"
+      : "donnée manquante";
+  }
   switch (type) {
     case "altman":
       return value.toFixed(2);
@@ -99,6 +113,12 @@ export function formatValue(type: SignalType, value: number | null): string {
       return value === 0
         ? "aucune vente"
         : `${(value * 100).toFixed(2)} % du capital`;
+    case "net_debt_ebitda":
+      // Valeur = ratio (multiples de l'EBITDA) ; null = EBITDA ≤ 0.
+      return `${value.toFixed(2)} × EBITDA`;
+    case "dilution":
+      // Valeur = croissance annuelle des parts (0.1 = +10 %).
+      return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)} % sur un an`;
     case "lstm":
       // Valeur = probabilité de faillite à 12 mois (0..1).
       return `${(value * 100).toFixed(1)} %`;

@@ -117,6 +117,31 @@ def splits_after(payload: dict | None) -> list[tuple[str, float]]:
     return sorted(out)
 
 
+def cached_splits(symbol: str, cache_dir: Path) -> list[tuple[str, float]] | None:
+    """Splits depuis le cache fichier des cours — AUCUN réseau.
+
+    Sert au job nocturne pour le signal dilution : comparer les parts
+    déclarées à travers un split invente une dilution (mesuré : Apple
+    +552 % en 2014 = 7:1, +283 % en 2020 = 4:1). Les facteurs viennent
+    du MÊME payload que les cours (cache partagé), donc d'une source
+    unique et déjà rafraîchie par fetch_history.
+
+    None = cache absent/inexploitable (entreprise à ticker jamais
+    valorisée, purge) : l'appelant traitera « splits non chargés » plutôt
+    que « aucun split » — un faux [] affirmerait avoir vérifié.
+    """
+    cache_file = cache_dir / f"prices_{symbol}.json"
+    if not cache_file.exists():
+        return None
+    try:
+        payload = json.loads(cache_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not payload.get("chart", {}).get("result"):
+        return None
+    return splits_after(payload)
+
+
 def raw_close(date: str, adj_close: float, splits: list[tuple[str, float]]) -> float:
     factor = 1.0
     for split_date, ratio in splits:

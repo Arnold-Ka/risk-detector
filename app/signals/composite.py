@@ -56,6 +56,13 @@ WEIGHTS: dict[str, float] = {
     # Le signal reste présent (un 1.03/2.04/4.02 compte toujours), il ne
     # sur-vote plus les exercices simples où tout le monde a un 5.02.
     "critical_8k": 0.5,
+    # --- V2 (feuille de route §2, ajoutés le 2026-10-19) ------------------
+    # Poids 1.0 par défaut, comme tous les signaux à leur arrivée : le
+    # balayage tune_weights.py les couvre automatiquement (liste = keys()),
+    # le retune (insider_sales + ces deux-là) attend le batch Form 4
+    # complet à 875/875 pour ne pas calibrer sur une couverture partielle.
+    "net_debt_ebitda": 1.0,
+    "dilution": 1.0,
 }
 
 # index de gravité par sévérité (texte affiché -> nombre).

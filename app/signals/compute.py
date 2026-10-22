@@ -35,8 +35,10 @@ from app.signals import (
     altman,
     beneish,
     composite,
+    dilution,
     divergence,
     insiders,
+    leverage,
     piotroski,
     runway,
 )
@@ -226,6 +228,35 @@ def plausible_shares(
     return value if _shares_are_plausible(value, others) else None
 
 
+def _dilution_shares(
+    year_node: dict | None, shares_history: list[tuple[str, float]] | None
+) -> tuple[float | None, str | None, str | None]:
+    """(parts plausibles, source, date d'observation) pour le signal dilution.
+
+    Chaîne identique à market_capitalisation : parts de couverture (dei)
+    soumises au garde-fou d'échelle, sinon repli parts pondérées basiques
+    avec plancher absolu seul (mêmes règles, même miroir — un seul
+    endroit du code décide ce qu'est une part plausible). None/None/None
+    si aucune source n'est exploitable : dilution sera « donnée
+    manquante ».
+
+    La DATE du nœud est rendue avec la valeur : c'est la fenêtre de
+    recherche des splits entre les deux exercices (dilution) — le nœud
+    dei porte sa date de couverture, le nœud pondéré sa fin d'exercice.
+    """
+    if not year_node:
+        return None, None, None
+    node = year_node.get("shares_outstanding")
+    if node:
+        dei = plausible_shares(year_node, shares_history)
+        if dei is not None:
+            return dei, "dei_cover", node["period_end"]
+    wavg = year_node.get("shares_weighted_basic")
+    if wavg and float(wavg["value"]) >= SHARES_FLOOR:
+        return float(wavg["value"]), "shares_weighted_basic", wavg["period_end"]
+    return None, None, None
+
+
 def market_capitalisation(
     cur: dict,
     floats: list[tuple[str, float]],
@@ -272,6 +303,7 @@ def compute_company(
     prices: list[tuple[str, float]],
     events: list[dict] | None = None,
     insiders_rows: list[dict] | None = None,
+    splits: list[tuple[str, float]] | None = None,
 ) -> list[SignalResult]:
     """Tous les signaux de tous les exercices d'une entreprise.
 
@@ -289,6 +321,14 @@ def compute_company(
 
     insiders_rows : transactions Form 4 (repo.fetch_insider_rows) — même
       contrat None/[] que events (signal insider_sales).
+
+    splits : [(date, facteur)] des splits de marché de l'entreprise
+      (edgar.yahoo.splits_after / cached_splits) — requis pour le signal
+      dilution : comparer des parts à travers un split inventerait une
+      émission (mesuré : Apple +552 % en 2014 = 7:1). Contrat identique
+      à events : None = non chargés -> dilution OMIS ; [] = vérifiés,
+      aucun split -> dilution non corrigée (rien à corriger). Le nightly
+      les lit dans le cache de cours, zéro requête supplémentaire.
     """
     years = build_years(rows)
     if not years:
@@ -376,6 +416,43 @@ def compute_company(
             if res:
                 year_results.append(res)
             res = beneish.evaluate(prev_v, cur_v, period_end, filing_id)
+            if res:
+                year_results.append(res)
+
+        # --- V2 : dette nette / EBITDA (feuille de route §2) ---------------
+        # Pairé pour la tendance « en hausse », mais tolère l'absence de
+        # l'exercice précédent : sans lui, un ratio > 4 plafonne à la
+        # vigilance (le critère « et en hausse » n'est pas confirmable).
+        res = leverage.evaluate(
+            prev_v if prev else None, cur_v, period_end, filing_id
+        )
+        if res:
+            year_results.append(res)
+
+        # --- V2 : dilution actions > 10 %/an (feuille de route §2) ---------
+        # Contrat None/[] identique à events : sans splits connus, une
+        # comparaison de parts à travers un split inventerait une émission
+        # (Apple 7:1 = +552 % déclarés mesurés en base). Parts des DEUX
+        # extrémités via _dilution_shares : même miroir de plausibilité
+        # que la capitalisation et le signal insiders.
+        if splits is not None:
+            prev_shares, prev_shares_src, prev_date = _dilution_shares(
+                prev, shares_history
+            )
+            cur_shares, cur_shares_src, cur_date = _dilution_shares(
+                cur, shares_history
+            )
+            res = dilution.evaluate(
+                prev_shares,
+                cur_shares,
+                period_end,
+                filing_id,
+                prev_date=prev_date,
+                cur_date=cur_date,
+                prev_source=prev_shares_src,
+                cur_source=cur_shares_src,
+                splits=splits,
+            )
             if res:
                 year_results.append(res)
 

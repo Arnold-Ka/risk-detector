@@ -47,7 +47,9 @@ présentation.
 import sys
 from collections import Counter
 from datetime import date
+from pathlib import Path
 
+from app.config import settings
 from app.db.repo import (
     fetch_event_rows,
     fetch_fact_rows,
@@ -60,6 +62,7 @@ from app.db.repo import (
 )
 from app.dl import infer as dl_infer
 from app.edgar.client import EdgarClient
+from app.edgar.yahoo import cached_splits
 from app.ingest.refresh import refresh_company
 from app.signals.compute import compute_company
 
@@ -128,7 +131,20 @@ def main(refresh: bool = True, limit: int | None = None) -> None:
                     if has_form4_filings(conn, company["id"])
                     else None
                 )
-                results = compute_company(rows, prices, events, insiders)
+                # Splits de marché -> correction du signal dilution. Source
+                # = cache de cours partagé, ZÉRO requête (contrat main(
+                # refresh=False) hors réseau tenu : lecture fichier seule).
+                # Ticker absent = jamais coté côté Yahoo : [] (aucun split
+                # de marché observable, documenté) ; ticker présent mais
+                # cache absent = None -> dilution omise (contrat events).
+                splits = (
+                    cached_splits(company["ticker"], Path(settings.cache_dir))
+                    if company.get("ticker")
+                    else []
+                )
+                results = compute_company(
+                    rows, prices, events, insiders, splits=splits
+                )
                 # Signaux LSTM : probabilité de faillite à 12 mois, un
                 # par exercice (fenêtre glissante) — AJOUTÉS aux signaux
                 # classiques, jamais pondérés par le composite (cf.
