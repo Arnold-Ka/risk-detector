@@ -78,6 +78,66 @@ def test_piotroski_all_criteria_fail():
     assert not any(res.details["criteria"].values())
 
 
+def _f7_rows(prev_year: dict, cur_year: dict) -> list[dict]:
+    """Deux exercices (dict valeurs) -> lignes facts pour compute_company."""
+    rows = []
+    for year, data in ((2020, prev_year), (2021, cur_year)):
+        for concept, value in data.items():
+            if value is None:
+                continue
+            rows.append({
+                "concept": concept, "value": value,
+                "period_end": f"{year}-12-31",
+                "filing_id": f"f{year}", "accn": f"f{year}",
+            })
+    return rows
+
+
+def test_piotroski_f7_split_corrected_in_compute():
+    """7:1 entre deux bilans : F7 ne doit PAS lire « émission » (piège Apple).
+
+    Garde-fou posé dans compute (hygiène des parts avant evaluate) :
+    sans splits le ×6,8 déclaré fait perdre un point de F ; avec le
+    facteur 7.0 sur la fenêtre des deux bilans, le rachat réel reparaît.
+    """
+    prev = _year(ni=70, cfo=80, ta=1000, ca=400, cl=250, ltd=300,
+                 shares=940_000_000, sales=800, gp=200)            # pré-split
+    cur = _year(ni=90, cfo=110, ta=1100, ca=500, cl=250, ltd=300,
+                shares=6_400_000_000, sales=950, gp=280)          # 7:1 + rachat
+    rows = _f7_rows(prev, cur)
+
+    def f_of(splits):
+        results = compute_company(rows, [], splits=splits)
+        piot = [r for r in results if r.signal_type == "piotroski"]
+        assert len(piot) == 1
+        return piot[0]
+
+    without = f_of([])
+    assert without.details["criteria"]["no_new_equity"] is False  # ×6,8 lu brut
+
+    with_split = f_of([("2021-06-01", 7.0)])
+    # 940 M × 7 = 6,58 Md ≥ 6,4 Md : rachat net, F7 passe, F gagne 1 point.
+    assert with_split.details["criteria"]["no_new_equity"] is True
+    assert with_split.value == without.value + 1.0
+
+
+def test_piotroski_f7_implausible_shares_kill_score():
+    """Parts hors échelle (erreur de facteur) : F7 inexistant -> F None.
+
+    Règle « donnée manquante > faux score » : un F sans son critère de
+    parts serait un demi-score (mesure famille RMD « 149 638 » en
+    milliers côté capitalisation).
+    """
+    prev = _year(ni=70, cfo=80, ta=1000, ca=400, cl=250, ltd=300,
+                 shares=200_000, sales=800, gp=200)
+    # Ratio 50 000 d'un coup, au-dessus des deux planchers : rejeté par
+    # l'échelle relative (le plancher absolu n'expliquerait pas le None).
+    cur = _year(ni=90, cfo=110, ta=1100, ca=500, cl=250, ltd=300,
+                shares=10_000_000_000, sales=950, gp=280)
+    results = compute_company(_f7_rows(prev, cur), [], splits=[])
+    assert not [r for r in results if r.signal_type == "piotroski"]
+
+
 def test_piotroski_missing_input_returns_none():
     """Aucun résultat brut ni EBIT -> critère de marge inévaluable -> None."""
     prev = _year(ni=70, cfo=80, ta=1000, ca=500, cl=220, ltd=250,

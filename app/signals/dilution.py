@@ -54,6 +54,27 @@ WATCH_GROWTH = 0.05
 ALERT_GROWTH = 0.10
 
 
+def splits_in_window(
+    d1: str | None,
+    d2: str | None,
+    splits: list[tuple[str, float]] | None,
+) -> list[tuple[str, float]]:
+    """Splits dans la fenêtre ouverte (d1, d2] — parts de t-1 comparées à t.
+
+    Comparaison lexicographique des dates ISO (même astuce que
+    edgar.yahoo.raw_close). Fenêtre indéfinie (dates ou splits absents)
+    -> [] : aucune correction possible, l'appelant reste non corrigé.
+
+    Partagé avec le critère F7 de Piotroski (compute) : un 7:1 entre les
+    deux bilans doit se corriger des DEUX côtés (dilution ET « pas
+    d'émission »), sinon les mêmes splits inventent des émissions dans
+    deux signaux différents.
+    """
+    if not splits or d1 is None or d2 is None:
+        return []
+    return [(d, r) for d, r in splits if d1 < d <= d2]
+
+
 def evaluate(
     prev_shares: float | None,
     cur_shares: float | None,
@@ -93,14 +114,10 @@ def evaluate(
         return None
 
     # --- Correction de split (cf. docstring) -------------------------------
-    # Comparaison lexicographique des ISO : même astuce que raw_close.
+    in_window = splits_in_window(prev_date, cur_date, splits)
     split_factor = 1.0
-    in_window: list[tuple[str, float]] = []
-    if splits and prev_date and cur_date:
-        for split_date, ratio in splits:
-            if prev_date < split_date <= cur_date:
-                split_factor *= ratio
-                in_window.append((split_date, ratio))
+    for _d, ratio in in_window:
+        split_factor *= ratio
     comparable_prev = prev_shares * split_factor
     if comparable_prev <= 0:
         return None

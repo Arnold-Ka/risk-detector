@@ -412,6 +412,35 @@ def compute_company(
         prev = years.get(year - 1)
         if prev:
             prev_v = {c: n["value"] for c, n in prev.items()}
+            # --- Hygiène des parts sur le critère F7 « pas d'émission » ----
+            # F7 est le SEUL critère de Piotroski qui lit les parts de
+            # couverture : mêmes garde-fous que le signal dilution, pour
+            # que les mêmes pièges ne survivent pas dans un deuxième
+            # signal (les tests dilution les couvrent déjà côté calcul).
+            #   1. échelle (plausible_shares) : RMD « 149 638 » en
+            #      milliers ferait échouer F7 -> F entier tué en fausse
+            #      fragilité ;
+            #   2. split (splits_in_window) : un 7:1 fait ×7 les parts
+            #      déclarées -> « émission » inventée et perte d'un point
+            #      sur une entreprise saine (mesuré : Apple 2014, même
+            #      famille que le +552 % de dilution corrigé en V2).
+            # Valeur None -> critère F7 None -> F strict-None (un F
+            # partiel mentirait autant qu'un faux F, règle produit).
+            # cur_v n'est lu par personne d'autre après substitution
+            # (beneish ignore les parts) : la mutation est ciblée.
+            sh_prev_ok = plausible_shares(prev, shares_history)
+            sh_cur_ok = plausible_shares(cur, shares_history)
+            if sh_prev_ok is not None and sh_cur_ok is not None:
+                factor = 1.0
+                for _d, ratio in dilution.splits_in_window(
+                    prev["shares_outstanding"]["period_end"],
+                    cur["shares_outstanding"]["period_end"],
+                    splits or [],
+                ):
+                    factor *= ratio
+                sh_prev_ok *= factor
+            prev_v["shares_outstanding"] = sh_prev_ok
+            cur_v["shares_outstanding"] = sh_cur_ok
             res = piotroski.evaluate(prev_v, cur_v, period_end, filing_id)
             if res:
                 year_results.append(res)
