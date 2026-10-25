@@ -11,9 +11,10 @@ Implémentation initiale (à recalibrer sur le backtest des semaines 7-8) :
     calculable (donnée manquante) est exclu du numérateur ET du
     dénominateur — sain de comparer 4 signaux plutôt que de noter 0 un
     signal absent ;
-  - poids initiaux égaux (1.0) — sauf `critical_8k` à 0.5, seul levier
-    dont le backtest (§6 sem. 7-8, 2026-10-14) a mesuré un gain net
-    (détect 6 m toujours en cible 60-70 %, FPR divisé par deux) ;
+  - poids égaux (1.0) sauf trois exceptions mesurées par le backtest :
+    `critical_8k` 0.5 (bruit annuel du 5.02, 2026-10-14), `late_filing`
+    1.5 et `insider_sales` 0.5 (retune combiné à couverture Form 4
+    complète, 2026-10-23 — détails au niveau de chaque clé dans WEIGHTS) ;
   - bandes : [0, 0,5[ faible · [0,5, 1[ modéré · [1, 1,5[ élevé ·
     [1,5, 2] critique.
 
@@ -31,20 +32,33 @@ from app.signals.common import (
     SignalResult,
 )
 
-# Poids initiaux égaux, sauf recalibration backtest (voir ci-dessous).
-# TODO(backtest) : les autres poids restent à 1.0 faute de gain mesuré
-# (balayage monovariable, scripts/tune_weights.py).
+# --- Retune définitif (backtest complet du 2026-10-23) ------------------------
+# Contexte : batch Form 4 terminé (832/875 entreprises avec dépôts en base,
+# 513 k Form 4), balayage monovariable + 13 vecteurs combinés testés sous
+# deux règles (">= modéré" et "modéré + défaillance"), même cohorte que le
+# tuning initial (547 faillites / 328 témoins S&P 500).
+# Aucun vecteur ne domine strictement 1.0 partout (det6 ET FPR) : le choix
+# est un arbitrage PRODUIT, tranché « précision » : à détection égale
+# (det6 64,7 / det12 56,5 contre 64,9 / 56,5 à 1.0 partout), FPR/an
+# 10,8 % -> 9,2 % et jamais-alerté 70 % -> 66 %, confirmé sous les deux
+# règles (règle alternative : FPR 9,9 % -> 8,5 %).
+# Balayage des autres poids conservés : late_filing 2.0 ferait tomber det6
+# à 59,8 (hors gate 60-70 %) ; insider_sales 0.5 seul porterait det6 à 70,0
+# mais FPR à 13,8 % (détection max refusée).
 WEIGHTS: dict[str, float] = {
     "altman": 1.0,
     "piotroski": 1.0,
     "beneish": 1.0,
     "divergence": 1.0,
     "runway": 1.0,
-    "late_filing": 1.0,
-    # Ventes massives de dirigeants (Form 4, §2) : poids 1.0 par défaut,
-    # re-calibrable au backtest comme critical_8k (aucun gain mesuré
-    # encore — le signal vient d'atterrir, batch Form 4 en cours).
-    "insider_sales": 1.0,
+    # Rapports de retard NT : preuve procédurale forte, peu bruitée.
+    "late_filing": 1.5,
+    # Ventes massives de dirigeants (Form 4, §2) : la routine des RSU
+    # touche les entreprises saines chaque année — à 1.0 le balayage
+    # montait det6 à 70,0 mais aussi le FPR à 13,8 %. À 0.5, la détection
+    # des années type AMC-2022 reste dans le composite sans polluer les
+    # exercices de rachat/RSU des saines.
+    "insider_sales": 0.5,
     # Recalibré le 2026-10-14 par le backtest (547 faillites / 328
     # témoins S&P 500, scripts/tune_weights.py) : à 1.0, la vigilance
     # annuelle de l'item 8-K 5.02 (officier qui quitte) touche 87 % des
@@ -55,12 +69,14 @@ WEIGHTS: dict[str, float] = {
     #   FPR par exercice  27,2 % -> 14,6 %   (jamais en 10 ans 97 % -> 78 %)
     # Le signal reste présent (un 1.03/2.04/4.02 compte toujours), il ne
     # sur-vote plus les exercices simples où tout le monde a un 5.02.
+    # Re-vérifié 2026-10-23 à couverture complète : 0.5 vs 1.0 n'a plus
+    # d'effet mesuré (les autres composantes ont dilué le 5.02), mais la
+    # direction reste juste — 2.0 explose le FPR (det6 75 / FPR 29).
     "critical_8k": 0.5,
     # --- V2 (feuille de route §2, ajoutés le 2026-10-19) ------------------
-    # Poids 1.0 par défaut, comme tous les signaux à leur arrivée : le
-    # balayage tune_weights.py les couvre automatiquement (liste = keys()),
-    # le retune (insider_sales + ces deux-là) attend le batch Form 4
-    # complet à 875/875 pour ne pas calibrer sur une couverture partielle.
+    # Retenu à 1.0 par le retune du 2026-10-23 : ni eux ni le reste du
+    # balayage n'améliore à la fois détection et FPR (net_debt 0.25 ->
+    # 62/11, dilution 0.5 -> 68/13 : bruit de cohorte, pas un signal).
     "net_debt_ebitda": 1.0,
     "dilution": 1.0,
 }
