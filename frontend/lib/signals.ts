@@ -201,6 +201,103 @@ export function formatValue(type: SignalType, value: number | null): string {
   }
 }
 
+// --- « Ce qui a changé » depuis l'exercice précédent ------------------------
+// Même règle que les alertes e-mail (app/alerts/changes.py) : on compare les
+// composantes du composite du dernier exercice à celles de l'exercice
+// précédent. Calcul fait ici à partir de l'historique déjà chargé par la
+// fiche (GET /companies/{cik}/signals) : aucun appel d'API supplémentaire.
+
+const SEVERITY_RANK: Record<string, number> = {
+  saine: 0,
+  vigilance: 1,
+  défaillance: 2,
+  faible: 0,
+  modéré: 1,
+  élevé: 2,
+  critique: 3,
+};
+
+export type ComponentChange = {
+  signalType: SignalType;
+  // null = signal non calculé cet exercice-là (donnée manquante, jamais
+  // assimilée à « saine »).
+  before: string | null;
+  after: string | null;
+  beforeValue: number | null;
+  afterValue: number | null;
+  // true = aggravation, false = amélioration, null = apparition/disparition
+  // (on ne peut pas dire si une donnée manquante est meilleure ou pire).
+  worsened: boolean | null;
+};
+
+export type YearOverYear = {
+  previousPeriod: string;
+  currentPeriod: string;
+  levelBefore: string;
+  levelAfter: string;
+  changes: ComponentChange[];
+};
+
+function componentsOf(signal: Signal): Record<string, string> {
+  const raw = signal.details?.["components"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
+
+/**
+ * Compare les deux derniers composites de l'historique.
+ * null si moins de deux exercices ont un composite (rien à comparer).
+ */
+export function yearOverYear(history: Signal[]): YearOverYear | null {
+  const composites = history
+    .filter((s) => s.signal_type === "composite")
+    .sort((a, b) => b.period_end.localeCompare(a.period_end));
+  if (composites.length < 2) return null;
+  const [current, previous] = composites;
+
+  const valueAt = (type: string, period: string): number | null =>
+    history.find((s) => s.signal_type === type && s.period_end === period)
+      ?.value ?? null;
+
+  const before = componentsOf(previous);
+  const after = componentsOf(current);
+  const changes = SIGNAL_ORDER.filter(
+    (type) => (type in before || type in after) && before[type] !== after[type],
+  ).map((type): ComponentChange => {
+    const old = before[type] ?? null;
+    const now = after[type] ?? null;
+    return {
+      signalType: type,
+      before: old,
+      after: now,
+      beforeValue: valueAt(type, previous.period_end),
+      afterValue: valueAt(type, current.period_end),
+      worsened:
+        old === null || now === null
+          ? null
+          : SEVERITY_RANK[now] > SEVERITY_RANK[old],
+    };
+  });
+
+  return {
+    previousPeriod: previous.period_end,
+    currentPeriod: current.period_end,
+    levelBefore: previous.severity,
+    levelAfter: current.severity,
+    changes,
+  };
+}
+
+/** Hausse (1), baisse (-1) ou stabilité (0) entre deux niveaux composites. */
+export function levelDirection(before: string, after: string): -1 | 0 | 1 {
+  const delta = (SEVERITY_RANK[after] ?? 0) - (SEVERITY_RANK[before] ?? 0);
+  return delta > 0 ? 1 : delta < 0 ? -1 : 0;
+}
+
 /** Signaux absents du composite (« donnée manquante » à afficher). */
 export function absentSignals(signal: Signal | undefined): string[] {
   const absent = signal?.details?.["absent"];

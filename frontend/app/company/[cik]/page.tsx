@@ -34,7 +34,11 @@ import {
   badgeClass,
   formatValue,
   isSectorScoreExcluded,
+  levelDirection,
   simpleRiskSummary,
+  yearOverYear,
+  type ComponentChange,
+  type YearOverYear,
 } from "@/lib/signals";
 import ScoreChart from "./score-chart";
 import WatchlistAction from "./watchlist-action";
@@ -107,6 +111,109 @@ function formatContribution(value: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+// Valeur avant → après, seulement quand les deux sont chiffrées (sinon la
+// sévérité seule est affichée : pas de « donnée manquante → 11 mois »).
+function changeValues(change: ComponentChange): string | null {
+  if (change.beforeValue === null || change.afterValue === null) return null;
+  return `${formatValue(change.signalType, change.beforeValue)} → ${formatValue(
+    change.signalType,
+    change.afterValue,
+  )}`;
+}
+
+function ChangeRow({ change }: { change: ComponentChange }) {
+  const label =
+    SIMPLE_SIGNAL_COPY[change.signalType]?.label ?? SIGNAL_LABELS[change.signalType];
+  const values = changeValues(change);
+  const trend =
+    change.worsened === null
+      ? { text: change.after === null ? "Plus calculé" : "Nouveau", className: "text-muted" }
+      : change.worsened
+        ? { text: "En dégradation", className: "text-rose-700" }
+        : { text: "En amélioration", className: "text-emerald-700" };
+
+  return (
+    <li className="grid gap-2 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-5">
+      <div>
+        <p className="font-semibold text-ink">{label}</p>
+        <p className={`mt-0.5 text-xs font-semibold ${trend.className}`}>
+          {trend.text}
+          {values && <span className="ml-1.5 font-normal text-muted">· {values}</span>}
+        </p>
+      </div>
+      <div className="flex items-center gap-2 text-xs">
+        <span className={`rounded-full px-2.5 py-1 font-semibold ${badgeClass(change.before ?? "")}`}>
+          {change.before ?? "non calculé"}
+        </span>
+        <span aria-hidden="true" className="text-muted">→</span>
+        <span className="sr-only">devient</span>
+        <span className={`rounded-full px-2.5 py-1 font-semibold ${badgeClass(change.after ?? "")}`}>
+          {change.after ?? "non calculé"}
+        </span>
+      </div>
+    </li>
+  );
+}
+
+// « Ce qui a changé » : l'utilisateur comprend en quelques secondes pourquoi
+// le niveau a bougé (ou non) depuis le rapport annuel précédent, sans lire
+// les 12 indicateurs. Même comparaison que les alertes e-mail.
+function ChangesSinceLastYear({ diff }: { diff: YearOverYear }) {
+  const direction = levelDirection(diff.levelBefore, diff.levelAfter);
+  const previousYear = diff.previousPeriod.slice(0, 4);
+  const currentYear = diff.currentPeriod.slice(0, 4);
+  // Dégradations d'abord : c'est l'information qui demande une action.
+  const changes = [...diff.changes].sort(
+    (a, b) => Number(b.worsened === true) - Number(a.worsened === true),
+  );
+
+  return (
+    <section
+      aria-labelledby="changes-heading"
+      className="overflow-hidden rounded-3xl border border-line bg-white shadow-sm"
+    >
+      <div className="border-b border-line bg-slate-50 p-5 sm:p-6">
+        <p className="text-xs font-bold tracking-[0.14em] text-brand">
+          CE QUI A CHANGÉ · EXERCICE {previousYear} → {currentYear}
+        </p>
+        <h2 id="changes-heading" className="mt-2 flex flex-wrap items-center gap-2 text-xl font-semibold text-ink">
+          {direction === 0 ? (
+            <>
+              Le niveau global est resté
+              <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${badgeClass(diff.levelAfter)}`}>
+                {diff.levelAfter}
+              </span>
+            </>
+          ) : (
+            <>
+              Le niveau global est {direction > 0 ? "monté" : "descendu"} de
+              <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${badgeClass(diff.levelBefore)}`}>
+                {diff.levelBefore}
+              </span>
+              à
+              <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${badgeClass(diff.levelAfter)}`}>
+                {diff.levelAfter}
+              </span>
+            </>
+          )}
+        </h2>
+      </div>
+      {changes.length > 0 ? (
+        <ul className="divide-y divide-line/70">
+          {changes.map((change) => (
+            <ChangeRow key={change.signalType} change={change} />
+          ))}
+        </ul>
+      ) : (
+        <p className="p-5 text-sm leading-6 text-muted sm:p-6">
+          Aucun indicateur n&apos;a changé de sévérité entre les deux derniers
+          rapports annuels.
+        </p>
+      )}
+    </section>
+  );
 }
 
 function SummarySignalCard({
@@ -429,6 +536,8 @@ async function CompanySection({
     .sort((left, right) => right.contribution - left.contribution)
     .slice(0, 3);
   const lstmSignal = byType.get("lstm");
+  // null si l'historique est indisponible ou ne compte qu'un exercice.
+  const diff = history.state === "ready" ? yearOverYear(history.signals) : null;
 
   return (
     <section className="space-y-8">
@@ -525,6 +634,8 @@ async function CompanySection({
           </aside>
         </section>
       )}
+
+      {composite && diff && <ChangesSinceLastYear diff={diff} />}
 
       {!composite && (
         <section className="rounded-3xl border border-amber-200 bg-amber-50 p-6 sm:p-8">
