@@ -8,7 +8,7 @@
 // (frontend/) — en dev, le fallback ci-dessous suffit, en prod on posera
 // frontend/.env.local.
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8011";
 
 // Miroir du modèle Company de l'API (identité depuis la table companies).
 export type Company = {
@@ -87,7 +87,7 @@ export async function fetchCompany(cik: number): Promise<CompanyResult> {
       state: "error",
       message:
         "Impossible de joindre l'API. " +
-        "Lancez le backend : uv run uvicorn app.api.main:app --reload",
+        "Lancez le backend : uv run uvicorn app.api.main:app --reload --port 8011",
     };
   }
 }
@@ -126,7 +126,7 @@ export async function searchCompanies(query: string): Promise<SearchState> {
       state: "error",
       message:
         "Impossible de joindre l'API. " +
-        "Lancez le backend : uv run uvicorn app.api.main:app --reload",
+        "Lancez le backend : uv run uvicorn app.api.main:app --reload --port 8011",
     };
   }
 }
@@ -160,7 +160,7 @@ export async function fetchCompanyList(): Promise<CompanyListResult> {
       state: "error",
       message:
         "Impossible de joindre l'API. " +
-        "Lancez le backend : uv run uvicorn app.api.main:app --reload",
+        "Lancez le backend : uv run uvicorn app.api.main:app --reload --port 8011",
     };
   }
 }
@@ -187,7 +187,72 @@ export async function fetchSignalHistory(cik: number): Promise<HistoryResult> {
       state: "error",
       message:
         "Impossible de joindre l'API. " +
-        "Lancez le backend : uv run uvicorn app.api.main:app --reload",
+        "Lancez le backend : uv run uvicorn app.api.main:app --reload --port 8011",
+    };
+  }
+}
+
+export type CoverageStatus =
+  | "scored"
+  | "partial"
+  | "not_scored"
+  | "not_comparable";
+
+export type CoverageCompany = {
+  cik: number;
+  name: string;
+  ticker: string | null;
+  sector_group: string;
+  status: CoverageStatus;
+  level: Level | null;
+  period_end: string | null;
+  computed_at: string | null;
+  available_components: number;
+  missing_components: number;
+};
+
+export type CoveragePage = {
+  items: CoverageCompany[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type CoverageResult =
+  | { state: "ready"; page: CoveragePage }
+  | { state: "error"; message: string };
+
+export async function fetchCoverage(
+  query: string,
+  offset: number,
+  limit = 50,
+): Promise<CoverageResult> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (query.trim()) params.set("q", query.trim());
+
+  try {
+    const response = await fetch(`${BASE}/coverage?${params.toString()}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as
+        | { detail?: unknown }
+        | null;
+      return {
+        state: "error",
+        message:
+          typeof body?.detail === "string"
+            ? body.detail
+            : `L'API a répondu ${response.status} pour la couverture.`,
+      };
+    }
+    return { state: "ready", page: (await response.json()) as CoveragePage };
+  } catch {
+    return {
+      state: "error",
+      message:
+        "Impossible de joindre l'API. " +
+        "Lancez le backend : uv run uvicorn app.api.main:app --reload --port 8011",
     };
   }
 }

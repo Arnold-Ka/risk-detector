@@ -9,5 +9,5 @@ Commandes et mise en route : voir le [README à la racine](../README.md).
 
 ```bash
 pnpm install
-pnpm dev      # lit NEXT_PUBLIC_API_URL (défaut http://localhost:8000)
+pnpm dev      # lit NEXT_PUBLIC_API_URL (défaut http://localhost:8011)
 ```

@@ -12,6 +12,7 @@ montage docker-entrypoint-initdb.d au PREMIER démarrage d'un volume vierge
 """
 
 import psycopg
+import uuid
 
 from app.config import settings
 
@@ -225,6 +226,107 @@ def search_companies(conn, query: str, limit: int = 10) -> list[dict]:
         )
         cols = ("cik", "name", "ticker", "sector_group", "level")
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def list_coverage_companies(
+    conn, query: str = "", limit: int = 50, offset: int = 0
+) -> dict:
+    """Page d'annuaire sur les entreprises effectivement présentes en base.
+
+    Le statut distingue « score disponible » de « fiche chargée » ; la liste
+    ne prétend pas représenter toutes les sociétés cotées américaines.
+    """
+    where = ""
+    filter_params: list = []
+    cleaned = query.strip()
+    if cleaned:
+        safe = cleaned.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{safe}%"
+        if cleaned.isdigit():
+            where = "WHERE (c.cik = %s OR c.name ILIKE %s OR c.ticker ILIKE %s)"
+            filter_params.extend((int(cleaned), pattern, pattern))
+        else:
+            where = "WHERE (c.name ILIKE %s OR c.ticker ILIKE %s)"
+            filter_params.extend((pattern, pattern))
+
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT count(*) FROM companies c {where}", filter_params)
+        total = cur.fetchone()[0]
+        cur.execute(
+            f"""
+            WITH page_companies AS MATERIALIZED (
+                SELECT c.id, c.cik, c.name, c.ticker, c.sector_group
+                FROM companies c
+                {where}
+                ORDER BY c.name, c.cik
+                LIMIT %s OFFSET %s
+            )
+            SELECT c.cik, c.name, c.ticker, c.sector_group,
+                   latest.severity, latest.period_end, latest.computed_at,
+                   latest.details
+            FROM page_companies c
+            LEFT JOIN LATERAL (
+                SELECT severity, period_end, computed_at, details
+                FROM signals
+                WHERE company_id = c.id AND signal_type = 'composite'
+                ORDER BY period_end DESC, computed_at DESC
+                LIMIT 1
+            ) latest ON true
+            ORDER BY c.name, c.cik
+            """,
+            [*filter_params, limit, offset],
+        )
+        rows = cur.fetchall()
+
+    items = []
+    for row in rows:
+        (
+            cik,
+            name,
+            ticker,
+            sector_group,
+            level,
+            period_end,
+            computed_at,
+            details,
+        ) = row
+        missing = details.get("absent", []) if isinstance(details, dict) else []
+        if sector_group in {"bank", "insurance", "reit"}:
+            status = "not_comparable"
+        elif level is None:
+            status = "not_scored"
+        elif missing:
+            status = "partial"
+        else:
+            status = "scored"
+        items.append(
+            {
+                "cik": cik,
+                "name": name,
+                "ticker": ticker,
+                "sector_group": sector_group,
+                "status": status,
+                "level": level if status not in {"not_comparable", "not_scored"} else None,
+                "period_end": (
+                    period_end.isoformat()
+                    if period_end and status != "not_comparable"
+                    else None
+                ),
+                "computed_at": (
+                    computed_at.isoformat()
+                    if computed_at and status != "not_comparable"
+                    else None
+                ),
+                "available_components": (
+                    len(details.get("components", {}))
+                    if isinstance(details, dict)
+                    and isinstance(details.get("components"), dict)
+                    else 0
+                ),
+                "missing_components": len(missing) if isinstance(missing, list) else 0,
+            }
+        )
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 def fetch_fact_rows(conn, company_id: str) -> list[dict]:
@@ -581,3 +683,107 @@ def replace_company_signals(
                 row["details"] = Json(row["details"])
             cur.executemany(stmt, payload)
     return len(payload)
+
+
+# --- Listes de suivi personnelles -------------------------------------------
+
+MAX_WATCHLIST_SIZE = 10
+
+
+def watchlist_user_id(clerk_subject: str) -> str:
+    """UUID local déterministe associé au sujet vérifié par Clerk."""
+    return str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"urn:risk-detector:clerk:{clerk_subject}")
+    )
+
+
+def upsert_watchlist_user(conn, clerk_subject: str, email: str) -> str:
+    """Crée ou retrouve l'utilisateur Clerk avec un UUID local stable.
+
+    Le sujet Clerk est transmis uniquement par le serveur Next après
+    validation de la session. L'UUID déterministe permet de réutiliser la
+    FK existante de `watchlists` sans exposer l'identité du fournisseur.
+    """
+    user_id = uuid.UUID(watchlist_user_id(clerk_subject))
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO users (id, email)
+            VALUES (%s, %s)
+            ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email
+            RETURNING id
+            """,
+            (user_id, email.strip()),
+        )
+        return str(cur.fetchone()[0])
+
+
+def fetch_watchlist(conn, user_id: str) -> list[dict]:
+    """Liste les entreprises suivies et leur dernier niveau composite."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.cik, c.name, c.ticker, w.added_at,
+                   (SELECT s.severity
+                    FROM signals s
+                    WHERE s.company_id = c.id AND s.signal_type = 'composite'
+                    ORDER BY s.period_end DESC, s.computed_at DESC
+                    LIMIT 1) AS level
+            FROM watchlists w
+            JOIN companies c ON c.id = w.company_id
+            WHERE w.user_id = %s
+            ORDER BY w.added_at DESC, c.name
+            """,
+            (user_id,),
+        )
+        return [
+            {
+                "cik": cik,
+                "name": name,
+                "ticker": ticker,
+                "added_at": added_at.isoformat(),
+                "level": level,
+            }
+            for cik, name, ticker, added_at, level in cur.fetchall()
+        ]
+
+
+def add_watchlist_company(
+    conn, user_id: str, company_id: str, limit: int = MAX_WATCHLIST_SIZE
+) -> str:
+    """Ajoute une entreprise, de façon idempotente et limitée par utilisateur.
+
+    Le verrou sur la ligne utilisateur sérialise les ajouts concurrents et
+    empêche de dépasser la limite de 10 éléments.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,))
+        if cur.fetchone() is None:
+            raise ValueError("Utilisateur de liste de suivi inexistant")
+
+        cur.execute(
+            "SELECT 1 FROM watchlists WHERE user_id = %s AND company_id = %s",
+            (user_id, company_id),
+        )
+        if cur.fetchone() is not None:
+            return "already_present"
+
+        cur.execute("SELECT count(*) FROM watchlists WHERE user_id = %s", (user_id,))
+        if cur.fetchone()[0] >= limit:
+            return "limit_reached"
+
+        cur.execute(
+            "INSERT INTO watchlists (user_id, company_id) VALUES (%s, %s)",
+            (user_id, company_id),
+        )
+        return "added"
+
+
+def remove_watchlist_company(conn, user_id: str, company_id: str) -> bool:
+    """Retire une entreprise de la liste de l'utilisateur courant."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM watchlists WHERE user_id = %s AND company_id = %s",
+            (user_id, company_id),
+        )
+        return cur.rowcount > 0

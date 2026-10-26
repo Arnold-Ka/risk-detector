@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     # Où les réponses EDGAR brutes sont mises en cache sur disque (gitignoré).
     cache_dir: str = "data/cache"
 
+    # Origines Next.js autorisées à appeler l'API depuis le navigateur.
+    frontend_origins: str = "http://localhost:3000"
+
+    # Secret serveur-à-serveur : seul le BFF Next.js peut appeler les routes
+    # privées de liste de suivi. Ne jamais préfixer cette variable NEXT_PUBLIC_.
+    watchlist_api_secret: str = ""
+
     @model_validator(mode="after")
     def _check_required_env(self) -> "Settings":
         """Échec explicite au démarrage si une variable manque dans .env.

@@ -7,8 +7,8 @@
 // robot, donc une entreprise ingérée hier apparaît tout de suite (pas
 // d'attente de redéploiement). ~875 lignes d'identité par appel : négligeable.
 //
-// La watchlist est exclue : placeholder sans contenu (noindex également posé
-// sur la page) — les moteurs ne doivent pas indexer une page vide.
+// Les espaces privés/utilitaires (liste de suivi et annuaire de couverture)
+// restent noindex et n'entrent pas dans le sitemap public.
 
 import type { MetadataRoute } from "next";
 import { fetchCompanyList } from "@/lib/api";

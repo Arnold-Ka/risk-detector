@@ -61,25 +61,99 @@ export const SIGNAL_HINTS: Record<SignalType, string> = {
   dilution:
     "Augmentation du nombre d'actions sur un an. Plus de 10 % = alerte, plus de 5 % = vigilance : les actionnaires sont dilués.",
   lstm:
-    "Probabilité de faillite dans les 12 mois estimée par un modèle d'apprentissage profond sur les 3 à 5 derniers exercices (ratios comptables et événements de dépôt).",
+    "Score estimé par un modèle d'apprentissage profond sur 3 à 5 exercices. Son pourcentage n'est pas une probabilité calibrée et il ne modifie pas le niveau global.",
 };
+
+// Formulations courtes pour le résumé destiné aux personnes qui découvrent
+// l'analyse financière. Les noms et explications techniques restent dans les
+// détails afin que le résumé ne remplace pas l'analyse complète.
+export const SIMPLE_SIGNAL_COPY: Partial<
+  Record<SignalType, { label: string; explanation: string }>
+> = {
+  altman: {
+    label: "Solvabilité (score Altman Z)",
+    explanation:
+      "Un score fondé sur les actifs, les dettes, les bénéfices et la valeur boursière. Il classe un profil de risque ; ce n'est pas une probabilité de faillite.",
+  },
+  piotroski: {
+    label: "Amélioration financière (score Piotroski F)",
+    explanation:
+      "Note de 0 à 9 fondée sur neuf critères comptables. Une note basse signifie que peu de critères sont favorables.",
+  },
+  beneish: {
+    label: "Anomalies comptables possibles (score Beneish M)",
+    explanation:
+      "Repère des combinaisons de chiffres parfois associées à une manipulation. Une alerte n'est pas une preuve de fraude.",
+  },
+  divergence: {
+    label: "Bénéfices et trésorerie",
+    explanation: "Le bénéfice progresse alors que l'argent généré par l'activité baisse.",
+  },
+  runway: {
+    label: "Réserves de trésorerie",
+    explanation: "Estime combien de temps la trésorerie peut durer au rythme actuel.",
+  },
+  late_filing: {
+    label: "Retards de déclaration à la SEC",
+    explanation:
+      "L'entreprise a signalé qu'un rapport annuel ou trimestriel ne serait pas déposé à temps.",
+  },
+  critical_8k: {
+    label: "Événements importants (rapports SEC 8-K)",
+    explanation:
+      "Un rapport courant à la SEC signale un événement comme une faillite, un défaut de paiement ou une correction de comptes.",
+  },
+  insider_sales: {
+    label: "Ventes déclarées par des dirigeants",
+    explanation:
+      "Compare la valeur des ventes déclarées par les dirigeants à la valeur boursière de l'entreprise. Une vente seule ne prouve pas un problème.",
+  },
+  net_debt_ebitda: {
+    label: "Dette nette comparée aux résultats",
+    explanation:
+      "Estime combien d'années de résultats de l'activité représenteraient la dette restante après déduction de la trésorerie.",
+  },
+  dilution: {
+    label: "Nombre d'actions",
+    explanation: "Une hausse du nombre d'actions réduit la part détenue par chaque actionnaire.",
+  },
+};
+
+export function simpleRiskSummary(level: Level | string): string {
+  switch (level) {
+    case "faible":
+      return "Peu de signaux de risque détectés";
+    case "modéré":
+      return "Quelques points méritent attention";
+    case "élevé":
+      return "Plusieurs signaux de risque importants";
+    case "critique":
+      return "Le niveau de risque calculé est très élevé";
+    default:
+      return "Résumé du risque indisponible";
+  }
+}
+
+export function isSectorScoreExcluded(sectorGroup: string | null): boolean {
+  return sectorGroup === "bank" || sectorGroup === "insurance" || sectorGroup === "reit";
+}
 
 /** Badge coloré par sévérité (signaux) ou niveau (composite). */
 export function badgeClass(severity: Severity | Level | string): string {
   switch (severity) {
     case "saine":
     case "faible":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200";
     case "vigilance":
     case "modéré":
-      return "bg-amber-100 text-amber-800";
+      return "bg-amber-50 text-amber-900 ring-1 ring-inset ring-amber-200";
     case "élevé":
-      return "bg-orange-100 text-orange-800";
+      return "bg-orange-50 text-orange-900 ring-1 ring-inset ring-orange-200";
     case "défaillance":
     case "critique":
-      return "bg-red-100 text-red-800";
+      return "bg-rose-50 text-rose-800 ring-1 ring-inset ring-rose-200";
     default:
-      return "bg-gray-100 text-gray-700";
+      return "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200";
   }
 }
 

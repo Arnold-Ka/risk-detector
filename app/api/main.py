@@ -5,18 +5,23 @@ rendues par le frontend Next.js (`frontend/`), qui appelle ces endpoints.
 Le backend ne rend jamais de HTML lui-même.
 
 Règles respectées ici :
-  - l'API ne CALCULE rien : elle lit les signaux pré-calculés par le job
-    nocturne (app/jobs/nightly.py) — « pré-calculer plutôt que calculer à
-    la demande » (§4) ;
+  - les routes publiques ne CALCULENT rien : elles lisent les signaux
+    pré-calculés par le job nocturne (app/jobs/nightly.py) ;
+  - les seules écritures utilisateur passent par /me/watchlist, protégées
+    par le BFF Next.js et une identité Clerk vérifiée ;
   - réponse 404 sur CIK inconnu (pas d'objet vide qui ressemblerait à une
     entreprise sans risque).
 """
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import settings
+from app.api.watchlist import router as watchlist_router
 from app.db.repo import (
     get_company,
     get_conn,
+    list_coverage_companies,
     latest_signals,
     list_companies,
     search_companies,
@@ -26,6 +31,20 @@ from app.db.repo import (
 # `title` apparaît dans la documentation auto-générée (/docs et /redoc) —
 # utile pour tester les endpoints à la main tant que le frontend n'existe pas.
 app = FastAPI(title="Risk Detector API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        origin.strip()
+        for origin in settings.frontend_origins.split(",")
+        if origin.strip()
+    ],
+    allow_credentials=False,
+    # Le navigateur n'accède directement qu'aux endpoints publics en lecture.
+    # Les mutations de watchlist passent par le BFF serveur Next.js.
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 
 
 @app.get("/health")
@@ -89,6 +108,25 @@ def list_companies_endpoint():
         conn.close()
 
 
+@app.get("/coverage")
+def coverage(
+    q: str = Query(default="", max_length=100),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    """Annuaire paginé des entreprises effectivement chargées en base.
+
+    Le résultat décrit la couverture de cette installation, pas tout le
+    marché américain. Le statut indique si le composite est disponible,
+    partiel ou non comparable pour le secteur.
+    """
+    conn = get_conn()
+    try:
+        return list_coverage_companies(conn, q, limit, offset)
+    finally:
+        conn.close()
+
+
 @app.get("/companies/{cik}")
 def get_company_card(cik: int):
     """Fiche de risque d'une entreprise, identifiée par son CIK SEC.
@@ -121,3 +159,6 @@ def get_company_signals(cik: int):
         return {"cik": cik, "signals": signal_history(conn, company["id"])}
     finally:
         conn.close()
+
+
+app.include_router(watchlist_router)

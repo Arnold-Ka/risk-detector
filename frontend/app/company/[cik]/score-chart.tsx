@@ -20,13 +20,13 @@ import { SIGNAL_LABELS, SIGNAL_ORDER } from "@/lib/signals";
 
 // Palette sévérité (hex — les classes Tailwind ne s'appliquent pas en SVG).
 const SEVERITY_COLORS: Record<string, string> = {
-  saine: "#059669",
-  faible: "#059669",
-  vigilance: "#d97706",
-  modéré: "#d97706",
-  élevé: "#ea580c",
-  défaillance: "#dc2626",
-  critique: "#dc2626",
+  saine: "#168267",
+  faible: "#168267",
+  vigilance: "#b7791f",
+  modéré: "#b7791f",
+  élevé: "#c26337",
+  défaillance: "#bd4857",
+  critique: "#bd4857",
 };
 
 // Seuils d'alerte par signal (feuille de route §2) — traits pointillés.
@@ -91,7 +91,7 @@ export default function ScoreChart({ signals }: { signals: Signal[] }) {
 
   if (available.length === 0 || points.length === 0) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-muted">
         Aucune valeur exploitable sur les 5 dernières années pour cette série.
       </p>
     );
@@ -124,14 +124,14 @@ export default function ScoreChart({ signals }: { signals: Signal[] }) {
   return (
     <div>
       <div className="mb-2 flex items-center gap-3">
-        <label htmlFor="serie" className="text-sm text-gray-600">
-          Série :
+        <label htmlFor="serie" className="text-sm font-semibold text-ink">
+          Indicateur affiché
         </label>
         <select
           id="serie"
           value={type}
           onChange={(e) => setType(e.target.value as SignalType)}
-          className="rounded-lg border border-gray-300 px-2 py-1 text-sm"
+          className="rounded-xl border border-line bg-white px-3 py-2 text-sm font-medium text-ink outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10"
         >
           {available.map((t) => (
             <option key={t} value={t}>
@@ -148,10 +148,10 @@ export default function ScoreChart({ signals }: { signals: Signal[] }) {
         className="w-full"
       >
         {/* Axes bornes (min/max de la plage affichée) */}
-        <text x={PAD.left - 6} y={yPx(yMax) + 4} textAnchor="end" fontSize="11" fill="#6b7280">
+        <text x={PAD.left - 6} y={yPx(yMax) + 4} textAnchor="end" fontSize="11" fill="#718096">
           {axisLabel(yMax)}
         </text>
-        <text x={PAD.left - 6} y={yPx(yMin) + 4} textAnchor="end" fontSize="11" fill="#6b7280">
+        <text x={PAD.left - 6} y={yPx(yMin) + 4} textAnchor="end" fontSize="11" fill="#718096">
           {axisLabel(yMin)}
         </text>
 
@@ -163,18 +163,18 @@ export default function ScoreChart({ signals }: { signals: Signal[] }) {
               x2={W - PAD.right}
               y1={yPx(th)}
               y2={yPx(th)}
-              stroke="#9ca3af"
+              stroke="#c2cdd8"
               strokeWidth="1"
               strokeDasharray="4 4"
             />
-            <text x={W - PAD.right + 4} y={yPx(th) + 4} fontSize="10" fill="#6b7280">
+            <text x={W - PAD.right + 4} y={yPx(th) + 4} fontSize="10" fill="#718096">
               {axisLabel(th)}
             </text>
           </g>
         ))}
 
         {/* Courbe : trait unique (la couleur d'alerte porte sur les points) */}
-        <path d={path} fill="none" stroke="#2563eb" strokeWidth="2" />
+        <path d={path} fill="none" stroke="#176b70" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
 
         {/* Points : couleur = sévérité de l'exercice, bulle native = détail */}
         {points.map((p) => (
@@ -182,7 +182,7 @@ export default function ScoreChart({ signals }: { signals: Signal[] }) {
             key={p.period_end}
             cx={x(p.t)}
             cy={yPx(p.value)}
-            r="4"
+            r="4.5"
             fill={SEVERITY_COLORS[p.severity] ?? "#6b7280"}
           >
             <title>{`${p.period_end} — ${p.value.toFixed(2)} (${p.severity})`}</title>
@@ -198,7 +198,7 @@ export default function ScoreChart({ signals }: { signals: Signal[] }) {
               y={H - 8}
               textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
               fontSize="11"
-              fill="#6b7280"
+              fill="#718096"
             >
               {p.period_end.slice(0, 4)}
             </text>
@@ -206,7 +206,7 @@ export default function ScoreChart({ signals }: { signals: Signal[] }) {
         )}
       </svg>
 
-      <p className="mt-2 text-xs text-gray-500">
+      <p className="mt-2 text-xs leading-5 text-muted">
         5 dernières années — points colorés par sévérité (survolez pour le
         détail), traits pointillés = seuils d&apos;alerte ({SIGNAL_LABELS[type]}).
       </p>
