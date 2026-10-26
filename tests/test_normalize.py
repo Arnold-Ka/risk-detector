@@ -81,9 +81,11 @@ def _spec(key: str, kind: str, tags: tuple[str, ...], namespace: str = "us-gaap"
     return ConceptSpec(key=key, label=key, kind=kind, namespace=namespace, tags=tags)
 
 
-def _instant(val: int, end: str, accn: str, filed: str) -> dict:
+def _instant(
+    val: int, end: str, accn: str, filed: str, form: str = "10-K"
+) -> dict:
     return {"end": end, "val": val, "accn": accn, "fy": 0, "fp": "FY",
-            "form": "10-K", "filed": filed}
+            "form": form, "filed": filed}
 
 
 # --- 1. fixtures synthétiques (toujours exécutées) --------------------------
@@ -111,6 +113,48 @@ def test_duration_window_rejects_quarterly_and_multiyear():
     ]}}
     rows = extract({"facts": {"us-gaap": {"Revenues": node}}}, specs={"sales": spec})
     assert [r["value"] for r in rows] == [100]
+
+
+def test_foreign_annual_forms_are_opt_in_and_namespaced_tags_are_supported():
+    spec = _spec("total_assets", "instant", ("Assets", "ifrs-full:Assets"))
+    facts = {
+        "facts": {
+            "us-gaap": {
+                "Assets": {
+                    "units": {
+                        "USD": [_instant(100, "2024-12-31", "us", "2025-02-01")]
+                    }
+                }
+            },
+            "ifrs-full": {
+                "Assets": {
+                    "units": {
+                        "EUR": [
+                            _instant(
+                                200,
+                                "2024-12-31",
+                                "fpi",
+                                "2025-03-01",
+                                form="20-F",
+                            )
+                        ]
+                    }
+                }
+            },
+        }
+    }
+
+    domestic = extract(facts, specs={"total_assets": spec})
+    foreign = extract(
+        facts, specs={"total_assets": spec}, annual_forms=("20-F", "40-F")
+    )
+
+    assert [(row["form"], row["value"], row["tag"]) for row in domestic] == [
+        ("10-K", 100, "Assets")
+    ]
+    assert [(row["form"], row["value"], row["tag"]) for row in foreign] == [
+        ("20-F", 200, "ifrs-full:Assets")
+    ]
 
 
 def test_variant_priority_and_year_filling():

@@ -416,6 +416,36 @@ def latest_form_filed_at(conn, company_id: str, form_type: str) -> str | None:
         return row.isoformat() if row else None
 
 
+def annual_forms_for_company(conn, company_id: str) -> tuple[str, ...]:
+    """Formulaires annuels déjà observés pour choisir l'extracteur du nightly."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT form_type
+            FROM filings
+            WHERE company_id = %s AND form_type = ANY(%s)
+            ORDER BY form_type
+            """,
+            (company_id, ["10-K", "20-F", "40-F"]),
+        )
+        return tuple(row[0] for row in cur.fetchall())
+
+
+def latest_annual_filed_at(conn, company_id: str) -> str | None:
+    """Date du dernier 10-K/20-F/40-F connu, ou None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT max(filed_at)
+            FROM filings
+            WHERE company_id = %s AND form_type = ANY(%s)
+            """,
+            (company_id, ["10-K", "20-F", "40-F"]),
+        )
+        row = cur.fetchone()[0]
+        return row.isoformat() if row else None
+
+
 def fetch_insider_rows(conn, company_id: str) -> list[dict]:
     """Transactions Form 4 d'une entreprise (alimente app.signals.insiders).
 

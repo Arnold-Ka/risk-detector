@@ -17,6 +17,8 @@
 #                   durée ~annuelle pour écarter les sous-périodes et les
 #                   synthèses pluriannuelles de l'Item 6.
 # namespace : "us-gaap" par défaut, "dei" pour les faits de couverture.
+# Une balise peut préciser un autre namespace sous la forme `namespace:Tag`
+# (ex. `ifrs-full:Assets`) ; elle n'est retenue que si l'émetteur la déclare.
 #
 # Chaque indicateur porte son libellé français : c'est lui qui sera affiché
 # sur la fiche de risque (langage simple), le tag reste l'identifiant DB.
@@ -32,27 +34,27 @@ concepts:
   total_assets:
     label: Actif total
     kind: instant
-    tags: [Assets]
+    tags: [Assets, ifrs-full:Assets]
 
   total_liabilities:
     label: Dettes totales (book)
     kind: instant
-    tags: [Liabilities]
+    tags: [Liabilities, ifrs-full:Liabilities]
 
   current_assets:
     label: Actifs circulants
     kind: instant
-    tags: [AssetsCurrent]
+    tags: [AssetsCurrent, ifrs-full:CurrentAssets]
 
   current_liabilities:
     label: Passifs circulants
     kind: instant
-    tags: [LiabilitiesCurrent]
+    tags: [LiabilitiesCurrent, ifrs-full:CurrentLiabilities]
 
   cash:
     label: Trésorerie et équivalents
     kind: instant
-    tags: [CashAndCashEquivalentsAtCarryingValue]
+    tags: [CashAndCashEquivalentsAtCarryingValue, ifrs-full:CashAndCashEquivalents]
 
   receivables:
     label: Créances clients
@@ -61,6 +63,7 @@ concepts:
       - AccountsReceivableNetCurrent
       - ReceivablesNetCurrent
       - ReceivablesNet
+      - ifrs-full:CurrentTradeReceivables
       # BBBY (détail) : AUCUNE tag receivables standard dans companyfacts —
       # sa ligne « receivables » du bilan est taguée créances cartes
       # (encaissements par carte = sa créance réelle, délai ~3 jours).
@@ -71,29 +74,29 @@ concepts:
   inventory:
     label: Stocks
     kind: instant
-    tags: [InventoryNet]
+    tags: [InventoryNet, ifrs-full:Inventories]
 
   stockholders_equity:
     label: Capitaux propres
     kind: instant
-    tags: [StockholdersEquity]
+    tags: [StockholdersEquity, ifrs-full:Equity]
 
   long_term_debt:
     label: Dette long terme
     kind: instant
-    tags: [LongTermDebtNoncurrent, LongTermDebt]
+    tags: [LongTermDebtNoncurrent, LongTermDebt, ifrs-full:Borrowings]
 
   retained_earnings:
     label: Bénéfices non répartis
     kind: instant
-    tags: [RetainedEarningsAccumulatedDeficit, RetainedEarnings]
+    tags: [RetainedEarningsAccumulatedDeficit, RetainedEarnings, ifrs-full:RetainedEarnings]
 
   # Beneish (AQI, DEPI) : le M-score a besoin des immobilisations nettes.
   # Absent du MVP initial, ajouté le 2026-10-12 avec le moteur de signaux.
   ppe:
     label: Immobilisations corporelles nettes
     kind: instant
-    tags: [PropertyPlantAndEquipmentNet]
+    tags: [PropertyPlantAndEquipmentNet, ifrs-full:PropertyPlantAndEquipment]
 
   # --- Faits de couverture (namespace dei) --------------------------------
   shares_outstanding:
@@ -118,42 +121,43 @@ concepts:
       - RevenueFromContractWithCustomerIncludingAssessedTax
       - SalesRevenueNet
       - SalesRevenueGoodsNet   # BBBY avant ASC 606 (phase 0)
+      - ifrs-full:Revenue
 
   operating_income:
     label: Résultat d'exploitation (proxy EBIT)
     kind: duration
-    tags: [OperatingIncomeLoss]
+    tags: [OperatingIncomeLoss, ifrs-full:ProfitLossFromOperatingActivities]
 
   net_income:
     label: Résultat net
     kind: duration
-    tags: [NetIncomeLoss, ProfitLoss]
+    tags: [NetIncomeLoss, ProfitLoss, ifrs-full:ProfitLoss]
 
   gross_profit:
     label: Résultat brut
     kind: duration
-    tags: [GrossProfit]
+    tags: [GrossProfit, ifrs-full:GrossProfit]
 
   sga:
     label: Frais de vente, généraux et administratifs
     kind: duration
-    tags: [SellingGeneralAndAdministrativeExpense]
+    tags: [SellingGeneralAndAdministrativeExpense, ifrs-full:SellingGeneralAndAdministrativeExpense]
 
   interest_expense:
     label: Charges d'intérêts
     kind: duration
-    tags: [InterestExpense, InterestExpenseNonoperating]
+    tags: [InterestExpense, InterestExpenseNonoperating, ifrs-full:InterestExpense]
 
   # --- Trésorerie : écart bénéfice/cash, runway, Beneish TATA -------------
   cfo:
     label: Flux de trésorerie d'exploitation
     kind: duration
-    tags: [NetCashProvidedByUsedInOperatingActivities, NetCashProvidedByUsedInOperatingActivitiesContinuingOperations]
+    tags: [NetCashProvidedByUsedInOperatingActivities, NetCashProvidedByUsedInOperatingActivitiesContinuingOperations, ifrs-full:CashFlowsFromUsedInOperatingActivities]
 
   depreciation:
     label: Amortissements et dotations
     kind: duration
-    tags: [DepreciationDepletionAndAmortization, DepreciationAmortizationAndAccretionNet, Depreciation]
+    tags: [DepreciationDepletionAndAmortization, DepreciationAmortizationAndAccretionNet, Depreciation, ifrs-full:DepreciationAndAmortisationExpense]
 
   # --- Dilution (Piotroski F7) : repli documenté sur les parts pondérées --
   shares_weighted_basic:

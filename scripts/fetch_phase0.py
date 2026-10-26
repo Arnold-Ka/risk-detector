@@ -40,7 +40,7 @@ from app.edgar.client import FACTS_URL, EdgarClient
 # du formatage. Une seule implémentation des règles de sélection
 # (fenêtre de durée, priorité de tags, vote de millésime) vivant dans
 # app/normalize/loader.py — c'est le même code qui remplit PostgreSQL.
-from app.normalize.loader import extract, load_map
+from app.normalize.loader import DEFAULT_ANNUAL_FORMS, extract, load_map
 
 # --- Les 3 entreprises de la phase 0 (choix validé) -------------------------
 # « saine » = actuelle et profitable ; « en difficulté » = cotée, très
@@ -145,7 +145,11 @@ def load_facts(client: EdgarClient, cik: int, refresh: bool) -> dict:
     return json.loads(payload)
 
 
-def build_rows(cik: int, companyfacts: dict) -> tuple[list[dict], dict[int, dict], list[str]]:
+def build_rows(
+    cik: int,
+    companyfacts: dict,
+    annual_forms: tuple[str, ...] = DEFAULT_ANNUAL_FORMS,
+) -> tuple[list[dict], dict[int, dict], list[str]]:
     """companyfacts -> lignes longues sourcées + valeurs par année + notes.
 
     L'extraction est intégralement déléguée à `app.normalize.loader.extract`
@@ -163,7 +167,7 @@ def build_rows(cik: int, companyfacts: dict) -> tuple[list[dict], dict[int, dict
     per_year: dict[int, dict] = {}
     tags_used: dict[str, set[str]] = {}
 
-    for fact in extract(companyfacts):
+    for fact in extract(companyfacts, annual_forms=annual_forms):
         accn = fact["accn"]
         year = int(fact["period_end"][:4])
         rows.append(
@@ -245,17 +249,16 @@ def main() -> None:
         print(f"  CIK: {cik}")
         facts = load_facts(client, cik, refresh)
 
-        gaap = facts.get("facts", {}).get("us-gaap", {})
-        if not gaap:
-            # Découverte typique de phase 0 : dépôts d'avant l'ère XBRL
-            # (obligatoire depuis ~2009) n'ont AUCUN fait structuré.
-            # Normal dans le backtest (cotée avant 2009 + pas de XBRL).
-            print("  !! AUCUNE donnée XBRL (dépôts antérieurs à l'ère XBRL ?)")
+        if not facts.get("facts"):
+            # Certains émetteurs étrangers déclarent leurs faits sous IFRS
+            # (`ifrs-full`) plutôt que `us-gaap`.
+            print("  !! Aucune donnée XBRL structurée disponible")
             if not manifest_mode:
                 print("     -> entreprise à remplacer dans le trio de la phase 0")
             continue
 
-        rows, per_year, notes = build_rows(cik, facts)
+        annual_forms = tuple(company.get("annual_forms", DEFAULT_ANNUAL_FORMS))
+        rows, per_year, notes = build_rows(cik, facts, annual_forms=annual_forms)
         out = write_outputs(company["slug"], rows, per_year, out_dir)
         years = sorted(per_year)
         print(f"  années fiscales: {years[0]}–{years[-1]} ({len(years)} ans)" if years else "  aucune année")

@@ -51,6 +51,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.db.repo import (
+    annual_forms_for_company,
     fetch_event_rows,
     fetch_fact_rows,
     fetch_insider_rows,
@@ -106,7 +107,7 @@ def main(refresh: bool = True, limit: int | None = None) -> None:
                 if refresh:
                     stats = refresh_company(conn, client, company)
                     note = (
-                        f"refresh: +{stats['new_10k']} 10-K, "
+                        f"refresh: +{stats['new_annual']} rapports annuels, "
                         f"+{stats['new_events']} événements, "
                         f"+{stats['new_form4']} Form 4 ({stats['tx']} tx), "
                         f"{stats['prices']} cours"
@@ -116,11 +117,35 @@ def main(refresh: bool = True, limit: int | None = None) -> None:
                         n_errors += 1
                     print(f"  {company['ticker'] or company['cik']}: {note}")
 
+                annual_forms = set(annual_forms_for_company(conn, company["id"]))
+                is_foreign_filer = bool({"20-F", "40-F"} & annual_forms)
                 rows = fetch_fact_rows(conn, company["id"])
+                if is_foreign_filer:
+                    # Les ADR peuvent coter une unité différente des actions
+                    # ordinaires XBRL ; le flottant est en USD tandis que les
+                    # états IFRS peuvent être en devise locale. Sans ratios de
+                    # conversion vérifiés, ne pas fabriquer ces signaux.
+                    rows = [
+                        row
+                        for row in rows
+                        if row["concept"]
+                        not in {
+                            "shares_outstanding",
+                            "shares_weighted_basic",
+                            "public_float",
+                        }
+                    ]
                 prices = fetch_price_rows(conn, company["id"])
                 # Dépôts 8-K/NT -> signaux d'événements (toujours une liste :
                 # on a vérifié, même vide, le « 0 » est donc vrai).
-                events = fetch_event_rows(conn, company["id"])
+                # Les FPI déclarent souvent leurs événements en 6-K ; tant
+                # que leur taxonomie n'est pas modélisée, omettre ces signaux
+                # plutôt que d'interpréter l'absence de 8-K comme un « sain ».
+                events = (
+                    None
+                    if is_foreign_filer
+                    else fetch_event_rows(conn, company["id"])
+                )
                 # Transactions Form 4 -> signal ventes de dirigeants. Contrat
                 # None/[] strict : [] seulement si des dépôts Form 4 existent
                 # en base (on a RÉELLEMENT vérifié) ; sinon None — un []
@@ -138,19 +163,27 @@ def main(refresh: bool = True, limit: int | None = None) -> None:
                 # de marché observable, documenté) ; ticker présent mais
                 # cache absent = None -> dilution omise (contrat events).
                 splits = (
-                    cached_splits(company["ticker"], Path(settings.cache_dir))
-                    if company.get("ticker")
-                    else []
+                    None
+                    if is_foreign_filer
+                    else (
+                        cached_splits(company["ticker"], Path(settings.cache_dir))
+                        if company.get("ticker")
+                        else []
+                    )
                 )
                 results = compute_company(
-                    rows, prices, events, insiders, splits=splits
+                    rows,
+                    [] if is_foreign_filer else prices,
+                    events,
+                    insiders,
+                    splits=splits,
                 )
                 # Signaux LSTM : probabilité de faillite à 12 mois, un
                 # par exercice (fenêtre glissante) — AJOUTÉS aux signaux
                 # classiques, jamais pondérés par le composite (cf.
                 # app/dl/infer). [] = strict-None (< 3 exercices, non
                 # traçable…) : la fiche affichera « donnée manquante ».
-                if dl_bundle is not None:
+                if dl_bundle is not None and not is_foreign_filer:
                     results.extend(
                         dl_infer.infer_company(conn, company, dl_bundle)
                     )

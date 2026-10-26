@@ -38,6 +38,7 @@ from app.db.repo import (
 from app.edgar.client import EdgarClient
 from app.edgar.submissions import load_filing_rows
 from app.ingest.companyfacts import ingest_companyfacts
+from app.normalize.loader import DEFAULT_ANNUAL_FORMS
 from scripts.fetch_phase0 import CACHE_DIR, OUT_DIR, resolve_run
 
 # Formulaires porteurs d'événements (§2) — une seule source de vérité :
@@ -141,17 +142,33 @@ def main() -> None:
             # partagé (app/ingest/companyfacts.py) — le refresh nocturne
             # utilise EXACTEMENT le même code, une seule implémentation
             # des règles de sélection (vote de millésime, fenêtre 300-400j…).
-            stats = ingest_companyfacts(conn, company_id, cik, companyfacts)
+            annual_forms = tuple(company.get("annual_forms", DEFAULT_ANNUAL_FORMS))
+            stats = ingest_companyfacts(
+                conn,
+                company_id,
+                cik,
+                companyfacts,
+                annual_forms=annual_forms,
+            )
 
-            # 1 bis. Dépôts événementiels (8-K items, NT retard) : mêmes
-            # lignes submissions que scripts.fetch_submissions met en cache.
+            # 1 bis. Dépôts sources : événements 8-K/NT, 6-K archivés pour
+            # les FPI, et formulaires annuels retenus dans le manifeste.
+            # Les 6-K ne sont pas encore interprétés comme des 8-K critiques.
+            # Mêmes lignes submissions que fetch_submissions met en cache.
             # Sans réseau si fetch_submissions a tourné ; sinon EdgarClient
             # retélécharge poliment (10 req/s, cache) — et si le réseau est
             # aussi coupé, on abandonne avec le rappel de la commande.
             try:
+                is_foreign_filer = bool({"20-F", "40-F"} & set(annual_forms))
+                submissions = load_filing_rows(EdgarClient(), cik)
                 event_filings = [
-                    fr for fr in load_filing_rows(EdgarClient(), cik)
+                    fr
+                    for fr in submissions
                     if fr["form"].startswith(EVENT_FORMS)
+                    or (is_foreign_filer and fr["form"].startswith("6-K"))
+                ]
+                annual_filings = [
+                    fr for fr in submissions if fr["form"] in annual_forms
                 ]
             except Exception as exc:
                 sys.exit(
@@ -159,7 +176,10 @@ def main() -> None:
                     "lancer d'abord uv run python -m scripts.fetch_submissions\n"
                     + str(exc)
                 )
-            for fr in event_filings:
+            filings_to_upsert = {
+                fr["accession"]: fr for fr in [*annual_filings, *event_filings]
+            }
+            for fr in filings_to_upsert.values():
                 upsert_filing(
                     conn,
                     company_id,
@@ -176,7 +196,7 @@ def main() -> None:
             purge_note = f", {stats['purged']} périmés purgés" if stats["purged"] else ""
             print(
                 f"  [{i}/{len(companies)}] {slug}: {stats['facts']} faits{purge_note}, "
-                f"{stats['filings_10k']} dépôts 10-K + {len(event_filings)} événements, "
+                f"{len(annual_filings)} dépôts annuels + {len(event_filings)} dépôts d'événements, "
                 f"{n_prices} cours"
             )
 

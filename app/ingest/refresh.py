@@ -12,8 +12,8 @@ ni le recalcul des signaux sur les données existantes) ;
                 TTL 20 h) : la base de la détection incrémentale ;
   1. facts    — si un 10-K inédit apparaît → retéléchargement companyfacts
                 (max_age=0 = forcé) → extract + purge/réinsertion ;
-  2. événements— 8-K/NT de la page recent absents de `filings` → upsert
-                (items + report_date pour les signaux d'événements) ;
+  2. événements— 8-K/NT pour les signaux ; 6-K des FPI conservés comme
+                 dépôts sources, sans les interpréter comme des 8-K ;
   3. Form 4   — idem pour les dépôts form="4" (XML parse → transactions) ;
                 SEULEMENT si l'entreprise a déjà des Form 4 en base :
                 le bootstrap historique (~720k XML) reste le travail du
@@ -31,10 +31,11 @@ from pathlib import Path
 
 from app.config import settings
 from app.db.repo import (
+    annual_forms_for_company,
     fetch_accessions,
     fetch_balance_dates,
     has_form4_filings,
-    latest_form_filed_at,
+    latest_annual_filed_at,
     upsert_filing,
     upsert_prices,
 )
@@ -44,6 +45,7 @@ from app.edgar.submissions import load_recent_rows
 from app.edgar.yahoo import daily_closes, fetch_history, raw_close, splits_after
 from app.ingest.companyfacts import ingest_companyfacts
 from app.ingest.form4 import ingest_form4_rows
+from app.normalize.loader import DEFAULT_ANNUAL_FORMS, SUPPORTED_ANNUAL_FORMS
 
 # Formulaires porteurs d'événements (§2) : 8-K (+ amendements) pour leurs
 # items, NT* pour les retards de dépôt. Même liste que le batch
@@ -104,7 +106,7 @@ def refresh_company(conn, client: EdgarClient, company: dict) -> dict:
     cik = company["cik"]
     company_id = company["id"]
     stats: dict = {
-        "errors": [], "new_10k": 0, "new_events": 0,
+        "errors": [], "new_annual": 0, "new_events": 0,
         "new_form4": 0, "tx": 0, "prices": 0,
     }
 
@@ -117,38 +119,66 @@ def refresh_company(conn, client: EdgarClient, company: dict) -> dict:
     except Exception as exc:
         stats["errors"].append(f"recent: {type(exc).__name__}: {exc}")
 
-    # --- 1. Faits XBRL : un 10-K plus récent que le dernier en base ? ------
-    # Comparaison par DATE max (et non par accession) : les 10-K dont
-    # extract() ne produit aucun fait (vintage perdant, fenêtre hors
-    # 300-400j) n'apparaissent jamais dans `filings` — une comparaison par
-    # accession les re-détecterait à CHAQUE nuit (re-téléchargement infini
-    # de companyfacts, mesuré sur 2034/2178 au premier pilote).
+    # --- 1. Faits XBRL : un dépôt annuel inédit est-il arrivé ? ------------
+    # Le formulaire est propre à l'émetteur : domestique 10-K, FPI 20-F,
+    # canadien 40-F. Le backtest garde son filtre 10-K par défaut ; le
+    # manifeste d'univers active explicitement les autres formes.
     if recent:
         try:
-            db_latest = latest_form_filed_at(conn, company_id, "10-K")
-            recent_10k = [r for r in recent if r["form"] == "10-K"]
-            newest = max((r["filed_at"] for r in recent_10k), default=None)
-            stats["new_10k"] = 1 if (newest and newest > (db_latest or "")) else 0
-            if stats["new_10k"]:
+            annual_forms = set(annual_forms_for_company(conn, company_id))
+            recent_annual = [
+                r for r in recent if r["form"] in SUPPORTED_ANNUAL_FORMS
+            ]
+            annual_forms.update(r["form"] for r in recent_annual)
+            if not annual_forms:
+                annual_forms.update(DEFAULT_ANNUAL_FORMS)
+            db_latest = latest_annual_filed_at(conn, company_id)
+            new_annual_rows = [
+                r for r in recent_annual if r["filed_at"] > (db_latest or "")
+            ]
+            stats["new_annual"] = 1 if new_annual_rows else 0
+            if stats["new_annual"]:
                 # max_age=0 : le cache est périmé PAR DÉFINITION (un
-                # nouveau 10-K est tombé) → force le re-téléchargement ;
+                # nouveau rapport annuel est tombé) → force le re-téléchargement ;
                 # le cache fichier est réécrit pour les prochains lancements.
                 facts_json = json.loads(
                     client.get(FACTS_URL.format(cik=cik), max_age=0)
                 )
                 stats["facts"] = ingest_companyfacts(
-                    conn, company_id, cik, facts_json
+                    conn,
+                    company_id,
+                    cik,
+                    facts_json,
+                    annual_forms=tuple(sorted(annual_forms)),
                 )
+                # Marquer les rapports observés même si aucun tag normalisé
+                # n'est disponible : évite de retélécharger companyfacts
+                # chaque nuit pour un formulaire étranger non mappé.
+                for row in new_annual_rows:
+                    upsert_filing(
+                        conn,
+                        company_id,
+                        accession=row["accession"],
+                        form_type=row["form"],
+                        filed_at=row["filed_at"],
+                        url=row["url"],
+                    )
         except Exception as exc:
             stats["errors"].append(f"facts: {type(exc).__name__}: {exc}")
 
-        # --- 2. Événements 8-K/NT inédits -> filings ----------------------
+        # --- 2. Événements 8-K/NT ; archives 6-K des FPI -------------------
         try:
             # Relecture des accessions : le step 1 a pu en ajouter (les
             # 10-K récents) — ne pas les re-proposer comme « nouveaux ».
             known = fetch_accessions(conn, company_id)
+            is_foreign_filer = bool(
+                {"20-F", "40-F"} & set(annual_forms_for_company(conn, company_id))
+            )
             new_events = select_new_filings(
-                recent, known, lambda r: r["form"].startswith(EVENT_FORMS)
+                recent,
+                known,
+                lambda r: r["form"].startswith(EVENT_FORMS)
+                or (is_foreign_filer and r["form"].startswith("6-K")),
             )
             for r in new_events:
                 upsert_filing(

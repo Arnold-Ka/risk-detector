@@ -6,7 +6,8 @@ la table `facts` (une ligne = un concept, une valeur, une date de fin de
 période, et le dépôt source exact — traçabilité au sens du principe nº1).
 
 Règles de sélection (héritées de la phase 0, validées par les tests) :
-  - uniquement les dépôts **10-K / fp=FY** (l'annuel, pas les trimestres) ;
+  - par défaut, uniquement **10-K / fp=FY** (l'annuel, pas les trimestres) ;
+    les 20-F/40-F sont opt-in pour les cohortes étrangères ;
   - pour les durées (`kind: duration`), une fenêtre de 300 à 400 jours —
     écarte les sous-périodes et les synthèses pluriannuelles (Item 6) ;
   - plusieurs tags par concept (table xbrl_map.yaml) : priorité à l'ordre
@@ -20,7 +21,7 @@ Règles de sélection (héritées de la phase 0, validées par les tests) :
     d'un même bilan doivent venir d'un MÊME dépôt. Chaque dépôt « vote »
     pour la date de fin concernée (un vote par concept qu'il couvre) ;
     gagne le plus grand nombre de votes, puis — à égalité — le dépôt le
-    plus récent (les 10-K/A sont en dehors du périmètre `form=10-K`).
+    plus récent (les formulaires amendés restent hors périmètre).
     Sans cette règle, chaque concept prend son propre dépôt le plus
     récent et l'on mélange deux millésimes : Apple 2008 ressortait avec
     actif du rapport 2010 mais passif du rapport 2009 (A ≠ L + SC).
@@ -42,7 +43,8 @@ import yaml
 # pour rester valable quel que soit le répertoire de lancement.
 MAP_PATH = Path(__file__).parent / "xbrl_map.yaml"
 
-ANNUAL_FORM = "10-K"
+DEFAULT_ANNUAL_FORMS = ("10-K",)
+SUPPORTED_ANNUAL_FORMS = ("10-K", "20-F", "40-F")
 ANNUAL_FP = "FY"
 
 # Fenêtre de durée admissible pour un fait "annuel" (en jours) : couvre les
@@ -81,7 +83,9 @@ def load_map(path: Path = MAP_PATH) -> dict[str, ConceptSpec]:
     return specs
 
 
-def _iter_annual(node: dict, kind: str):
+def _iter_annual(
+    node: dict, kind: str, annual_forms: tuple[str, ...] = DEFAULT_ANNUAL_FORMS
+):
     """Tous les faits annuels VALIDES d'un tag : (fin de période, fait).
 
     Filtres seulement (form/fp/fenêtre de durée), SANS déduplication —
@@ -92,7 +96,7 @@ def _iter_annual(node: dict, kind: str):
     """
     for unit_values in node.get("units", {}).values():
         for v in unit_values:
-            if v.get("form") != ANNUAL_FORM or v.get("fp") != ANNUAL_FP:
+            if v.get("form") not in annual_forms or v.get("fp") != ANNUAL_FP:
                 continue
             end = v.get("end")
             if not end:
@@ -107,14 +111,18 @@ def _iter_annual(node: dict, kind: str):
             yield end, v
 
 
-def _annual_values(node: dict, kind: str) -> dict[str, dict]:
+def _annual_values(
+    node: dict,
+    kind: str,
+    annual_forms: tuple[str, ...] = DEFAULT_ANNUAL_FORMS,
+) -> dict[str, dict]:
     """Valeurs annuelles d'un tag brut : {fin de période ISO: fait source}.
 
     Plusieurs faits peuvent tomber sur la même date (restatements) : on
     garde celui déposé le plus récent (`filed` max).
     """
     best: dict[str, dict] = {}
-    for end, v in _iter_annual(node, kind):
+    for end, v in _iter_annual(node, kind, annual_forms):
         if end not in best or v.get("filed", "") > best[end].get("filed", ""):
             best[end] = v
     return best
@@ -141,12 +149,20 @@ def _select_vintage(
     }
 
 
-def extract(companyfacts: dict, specs: dict[str, ConceptSpec] | None = None) -> list[dict]:
+def extract(
+    companyfacts: dict,
+    specs: dict[str, ConceptSpec] | None = None,
+    annual_forms: tuple[str, ...] = DEFAULT_ANNUAL_FORMS,
+) -> list[dict]:
     """companyfacts -> liste de faits normalisés (tri concept puis date).
+
+    `annual_forms` est opt-in : par défaut, seul le 10-K est lu afin de
+    préserver le benchmark historique. Les cohortes étrangères peuvent
+    demander explicitement les 20-F/40-F.
 
     Chaque entrée :
       {"concept", "label", "kind", "period_end", "value",
-       "accn", "filed", "tag"} — `tag` = variante XBRL réellement retenue,
+       "accn", "filed", "form", "tag"} — `tag` = variante XBRL réellement retenue,
       `accn`/`filed` = dépôt et date de dépôt, pour remonter à la source.
 
     Durées sélectionnées directement (priorité de tag, puis filed max) ;
@@ -165,18 +181,23 @@ def extract(companyfacts: dict, specs: dict[str, ConceptSpec] | None = None) -> 
     instant_cand: dict[str, dict[str, list[tuple[int, dict]]]] = {}
 
     for spec in specs.values():
-        ns_facts = facts_ns.get(spec.namespace, {})
         dur_slot = duration_sel.setdefault(spec.key, {})
         inst_slot = instant_cand.setdefault(spec.key, {})
-        for tag_idx, tag in enumerate(spec.tags):
+        for tag_idx, tag_ref in enumerate(spec.tags):
+            namespace, separator, tag = tag_ref.partition(":")
+            if not separator:
+                namespace, tag = spec.namespace, tag_ref
+            ns_facts = facts_ns.get(namespace, {})
             node = ns_facts.get(tag)
             if not node:
                 continue
             if spec.kind == "duration":
-                for end, rec in _annual_values(node, spec.kind).items():
+                for end, rec in _annual_values(
+                    node, spec.kind, annual_forms
+                ).items():
                     dur_slot.setdefault(end, (tag_idx, rec))
             else:
-                for end, rec in _iter_annual(node, spec.kind):
+                for end, rec in _iter_annual(node, spec.kind, annual_forms):
                     inst_slot.setdefault(end, []).append((tag_idx, rec))
 
     winners = _select_vintage(instant_cand)
@@ -206,6 +227,7 @@ def extract(companyfacts: dict, specs: dict[str, ConceptSpec] | None = None) -> 
                     "value": rec["val"],
                     "accn": rec["accn"],
                     "filed": rec.get("filed", ""),
+                    "form": rec.get("form", ""),
                     "tag": spec.tags[tag_idx],
                 }
             )
