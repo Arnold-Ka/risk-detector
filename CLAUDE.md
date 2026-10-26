@@ -15,9 +15,10 @@ The pipeline reads left to right; each stage lives in its own package under `app
 3. **Ingest** — `app/ingest/` writes ingestion tables (`companyfacts.py`, `form4.py`, `refresh.py`); `scripts/load_*` are batch wrappers over the same code.
 4. **Signals** — `app/signals/` pure functions (Altman, Piotroski, Beneish, runway, leverage, dilution, divergence, events/8-K, insiders), wired by `compute.py`, aggregated by `composite.py`.
 5. **DL** — `app/dl/` (`dataset.py`, `model.py`, `infer.py`, `attribution.py`) produces the separate `lstm` signal from `data/models/lstm.pt`; trained by `scripts/train_lstm.py`.
-6. **Persist / orchestrate** — `app/jobs/nightly.py` (refresh → compute → replace signals per company); `app/db/repo.py` holds all SQL; schema in `app/db/schema.sql`.
-7. **Serve** — `app/api/main.py` (public read-only routes) and `app/api/watchlist.py` (`/me/watchlist`, authenticated via the shared secret).
-8. **Frontend** — `frontend/` Next.js app; `lib/api.ts` calls the FastAPI backend, `lib/server-watchlist.ts` + `app/api/` route handlers forward Clerk-verified watchlist calls server-side with `WATCHLIST_API_SECRET`; `proxy.ts` is the Next 16 request proxy (Clerk middleware, no-op when Clerk keys are absent).
+6. **Persist / orchestrate** — `app/jobs/nightly.py` (refresh → compute → replace signals per company → tier-change alerts); `app/db/repo.py` holds all SQL; schema in `app/db/schema.sql`.
+7. **Alerts** — `app/alerts/changes.py` (pure detection + digest text) and `mailer.py` (stdlib SMTP, disabled without `SMTP_HOST`/`ALERT_FROM_EMAIL`).
+8. **Serve** — `app/api/main.py` (public read-only routes) and `app/api/watchlist.py` (`/me/watchlist`, authenticated via the shared secret).
+9. **Frontend** — `frontend/` Next.js app; `lib/api.ts` calls the FastAPI backend, `lib/server-watchlist.ts` + `app/api/` route handlers forward Clerk-verified watchlist calls server-side with `WATCHLIST_API_SECRET`; `proxy.ts` is the Next 16 request proxy (Clerk middleware, no-op when Clerk keys are absent).
 
 Evaluation lives in `app/backtest/` (`cohort.py`, `metrics.py`) driven by `scripts/backtest.py` and `scripts/tune_weights.py`; README holds the baseline metrics any weight change must be compared against.
 

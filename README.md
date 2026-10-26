@@ -98,7 +98,7 @@ les comptes et la liste de suivi en local, copier `frontend/.env.example` vers
 `frontend/.env.local`, configurer les clés Clerk et partager la même valeur de
 `WATCHLIST_API_SECRET` entre ce fichier et le `.env` racine.
 
-Tests : `uv run pytest` (184 tests collectés).
+Tests : `uv run pytest` (196 tests collectés).
 
 Mise en production (GitHub Actions + Render + Vercel + Neon + Clerk) :
 voir [docs/DEPLOY.md](docs/DEPLOY.md).
@@ -121,7 +121,7 @@ uv run python -m scripts.backtest       # rejoue les métriques ci-dessus
 app/          API FastAPI + moteurs (normalize, signals, edgar, dl, ingest,
               backtest, jobs) — signaux purs et testables
 scripts/      commandes batch : collecte SEC, ingestion, backtest, entraînement
-tests/        suite pytest (172)
+tests/        suite pytest (196)
 frontend/     application Next.js 16
 data/         manifest de cohorte (versionné) + caches (gitignorés)
 docker-compose.yml

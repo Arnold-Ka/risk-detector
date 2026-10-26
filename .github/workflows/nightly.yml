@@ -48,6 +48,16 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          # Alertes e-mail : secrets absents = envoi désactivé, le job
+          # journalise seulement les changements de palier (sans adresse).
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT || '587' }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ALERT_FROM_EMAIL: ${{ secrets.ALERT_FROM_EMAIL }}
+          # Variable (pas un secret) : URL Vercel publique des liens d'e-mail.
+          # Repli explicite plutôt qu'une chaîne vide (liens relatifs cassés).
+          SITE_URL: ${{ vars.SITE_URL || 'http://localhost:3000' }}
 
       # Repli silencieux si l'artefact LSTM est absent (non versionné sur
       # une branche de test) : le nightly saute le DL et écrit quand même

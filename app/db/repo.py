@@ -779,6 +779,51 @@ def add_watchlist_company(
         return "added"
 
 
+def latest_composite(conn, company_id: str) -> dict | None:
+    """Dernier composite EN BASE (exercice le plus récent), ou None.
+
+    Lu par le nightly AVANT replace_company_signals pour détecter un
+    changement de palier (app/alerts/changes.py). Même forme que
+    changes.latest_composite_of afin de comparer des objets identiques.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT period_end, severity, details
+            FROM signals
+            WHERE company_id = %s AND signal_type = 'composite'
+            ORDER BY period_end DESC
+            LIMIT 1
+            """,
+            (company_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    period_end, severity, details = row
+    return {
+        "period_end": period_end.isoformat(),
+        "severity": severity,
+        "components": dict((details or {}).get("components", {})),
+    }
+
+
+def company_watcher_emails(conn, company_id: str) -> list[str]:
+    """Adresses des utilisateurs qui suivent l'entreprise (destinataires d'alerte)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.email
+            FROM watchlists w
+            JOIN users u ON u.id = w.user_id
+            WHERE w.company_id = %s
+            ORDER BY u.email
+            """,
+            (company_id,),
+        )
+        return [email for (email,) in cur.fetchall()]
+
+
 def remove_watchlist_company(conn, user_id: str, company_id: str) -> bool:
     """Retire une entreprise de la liste de l'utilisateur courant."""
     with conn.cursor() as cur:

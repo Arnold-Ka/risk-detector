@@ -92,6 +92,72 @@ def test_nightly_fills_signals_and_is_idempotent():
     assert by_sev1 == by_sev2
 
 
+def test_nightly_alerts_watchers_on_level_change(monkeypatch):
+    """Bout en bout : palier modifié en base -> alerte pour l'abonné, envoi intercepté.
+
+    On falsifie le dernier composite stocké de la première entreprise (celle
+    que traite limit=1), on l'ajoute à la liste d'un utilisateur jetable, et
+    le nightly doit détecter « palier stocké != palier recalculé ». Le
+    recalcul réécrit ensuite le vrai niveau : la base revient à son état.
+    """
+    from uuid import uuid4
+
+    from app.jobs import nightly
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT c.id, c.ticker, s.severity, s.period_end
+                   FROM companies c
+                   JOIN signals s ON s.company_id = c.id
+                                 AND s.signal_type = 'composite'
+                   WHERE c.cik = (SELECT min(cik) FROM companies)
+                     AND c.sector_group = 'other'
+                   ORDER BY s.period_end DESC LIMIT 1"""
+            )
+            row = cur.fetchone()
+            if row is None:
+                pytest.skip("aucun composite pour la première entreprise")
+            company_id, ticker, real_level, period_end = row
+            fake_level = "critique" if real_level != "critique" else "faible"
+            cur.execute(
+                """UPDATE signals SET severity = %s
+                   WHERE company_id = %s AND signal_type = 'composite'
+                     AND period_end = %s""",
+                (fake_level, company_id, period_end),
+            )
+            user_id, email = uuid4(), f"alert-test-{uuid4().hex}@example.invalid"
+            cur.execute("INSERT INTO users (id, email) VALUES (%s, %s)",
+                        (user_id, email))
+            cur.execute(
+                "INSERT INTO watchlists (user_id, company_id) VALUES (%s, %s)",
+                (user_id, company_id),
+            )
+        conn.commit()
+
+        captured = {}
+
+        def _capture(pending):
+            captured.update(pending)
+            return {"sent": 0, "failed": 0, "skipped": len(pending)}
+
+        monkeypatch.setattr(nightly, "send_digests", _capture)
+        nightly.main(refresh=False, limit=1, notify=True)
+
+        assert email in captured, "l'abonné n'a reçu aucune alerte"
+        (change,) = captured[email]
+        assert (change.before, change.after) == (fake_level, real_level)
+        assert change.ticker == ticker
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM watchlists WHERE user_id IN "
+                        "(SELECT id FROM users WHERE email LIKE 'alert-test-%%')")
+            cur.execute("DELETE FROM users WHERE email LIKE 'alert-test-%%'")
+        conn.commit()
+        conn.close()
+
+
 def test_signals_trace_back_to_filings():
     """Traçabilité : tous les signaux sauf le composite portent un filing_id."""
     conn = get_conn()

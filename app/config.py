@@ -67,6 +67,22 @@ class Settings(BaseSettings):
     # privées de liste de suivi. Ne jamais préfixer cette variable NEXT_PUBLIC_.
     watchlist_api_secret: str = ""
 
+    # Alertes e-mail du nightly (app/alerts/mailer.py). Envoi désactivé tant
+    # que smtp_host OU alert_from_email est vide : le job journalise alors
+    # les changements sans rien envoyer (local, CI). Port 465 = TLS
+    # implicite, tout autre port = STARTTLS (587 chez la plupart des relais).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    # Expéditeur, ex. "Détecteur de risque <alertes@mondomaine.fr>" : le
+    # domaine doit être vérifié chez le fournisseur (SPF/DKIM), sinon les
+    # messages finissent en spam.
+    alert_from_email: str = ""
+    # URL publique du site Next (liens des e-mails) — même valeur que
+    # NEXT_PUBLIC_SITE_URL côté frontend.
+    site_url: str = "http://localhost:3000"
+
     @model_validator(mode="after")
     def _check_required_env(self) -> "Settings":
         """Échec explicite au démarrage si une variable manque dans .env.

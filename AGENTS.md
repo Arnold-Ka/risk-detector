@@ -28,7 +28,7 @@ Early-warning financial-risk tool for US listed companies. Product spec: `Feuill
 | Run API | `uv run uvicorn app.api.main:app --reload --port 8011` → `/health` |
 | Tests | `uv run pytest` |
 | One file / one test | `uv run pytest tests/test_signals.py -v` / `uv run pytest "tests/test_api.py::test_health_returns_ok"` |
-| Nightly | `uv run python -m app.jobs.nightly`; `--no-refresh` = signals only, `--limit N` = pilot |
+| Nightly | `uv run python -m app.jobs.nightly`; `--no-refresh` = signals only, `--limit N` = pilot, `--no-alerts` = skip tier-change e-mails |
 | Frontend | `pnpm --dir frontend dev` · `pnpm --dir frontend lint` · `pnpm --dir frontend build` |
 
 Run the test, frontend lint and frontend build commands before a PR. `.github/workflows/ci.yml` runs them on every push/PR against an empty, schema-only PostgreSQL, so data-dependent tests skip there; a green CI does not replace a local run on loaded data.
@@ -50,6 +50,7 @@ In the sequences below, bare script names mean `uv run python -m scripts.<name>`
 
 - Public company/search API routes are read-only. `/me/watchlist` is the user-data write path; trust only Clerk identity verified by Next and the server-only `WATCHLIST_API_SECRET`, never a browser-supplied user ID. The local user UUID is deterministic from Clerk's subject; keep that mapping stable. The 10-company limit is enforced under a per-user row lock in `app/db/repo.py`.
 - `app/jobs/nightly.py` remains the only **production writer of `signals`**.
+- Tier-change alerts (`app/alerts/`) have no state table: nightly reads the stored latest composite before replacing signals and alerts after commit, so reruns never duplicate. `main(notify=False)` is the default so tests never send e-mail; only the CLI enables it. Never log e-mail addresses (Actions logs may be public).
 - Nightly refresh → compute → replaces signals in one transaction per company. Batch loaders write ingestion tables; shared ingestion lives in `app/ingest/`.
 - `app/normalize/loader.py` is the single XBRL extraction engine for scripts and nightly; do not duplicate its selection rules. `app/signals/` contains pure functions, `compute.py` their wiring, and `composite.py` the tuned weights.
 - Missing required inputs mean `None`/omitted signal, never 0 or an invented fallback. The composite instead averages its **available** components and returns `None` only when none are usable.

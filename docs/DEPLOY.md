@@ -136,6 +136,16 @@ Dans le dépôt : **Settings → Secrets and variables → Actions**
 | Secret | `DATABASE_URL` | chaîne pooled Neon (identique à Render) |
 | Secret | `SEC_USER_AGENT` | nom + e-mail réels (règle SEC) |
 | Variable | `API_URL` | URL Render **sans** `/health` |
+| Secret *(alertes)* | `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD` | relais SMTP du fournisseur d'envoi (Brevo, Resend, Mailgun…) |
+| Secret *(alertes)* | `SMTP_PORT` | facultatif, `587` par défaut (`465` = TLS implicite) |
+| Secret *(alertes)* | `ALERT_FROM_EMAIL` | expéditeur sur un domaine vérifié (SPF/DKIM), ex. `Détecteur de risque <alertes@mondomaine.fr>` |
+| Variable *(alertes)* | `SITE_URL` | URL Vercel publique (= `NEXT_PUBLIC_SITE_URL`), utilisée dans les liens des e-mails |
+
+Les secrets *(alertes)* sont facultatifs : sans `SMTP_HOST` ou
+`ALERT_FROM_EMAIL`, le nightly détecte les changements de palier des
+entreprises suivies et les journalise (comptes seulement, jamais d'adresse)
+sans rien envoyer. Renseigner `SITE_URL` **avant** d'activer l'envoi, sinon
+les liens pointent sur `localhost`.
 
 Les clés Clerk et `WATCHLIST_API_SECRET` vont dans les variables d'environnement
 de Vercel (et le secret partagé va aussi dans Render) ; elles ne sont pas
@@ -186,6 +196,11 @@ migration sans réécriture, mêmes points d'entrée.
 - **Déployer l'API après un push** : automatique (`autoDeploy: true`) ;
   sinon Render → service → *Manual Deploy*.
 - **Changer `SEC_USER_AGENT`** : Secret GitHub + env Render (deux endroits).
+- **Changer les poids ou les seuils du composite** : le premier nightly qui
+  suit recalcule tous les niveaux, et chaque palier qui bouge déclenche une
+  alerte pour ses abonnés. Pour un recalcul silencieux, lancer une fois
+  `uv run python -m app.jobs.nightly --no-alerts` contre la base hébergée
+  avant le prochain run planifié.
 - **Revenir en local** : rien ne change — `docker compose up -d --wait`,
   `uv run uvicorn app.api.main:app --reload --port 8011`,
   `pnpm --dir frontend dev` continuent de pointer sur la base Docker

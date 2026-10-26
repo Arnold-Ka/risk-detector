@@ -14,7 +14,12 @@ Pipeline (AUTONOME depuis la réfection de la phase 1) :
                     purge + réinsertion par entreprise (replace_company_signals),
                     chaque ligne avec period_end + filing_id (traçabilité) ;
                     + signal LSTM (phase 2, app/dl/infer) si l'artefact
-                    data/models/lstm.pt existe — ignoré sinon.
+                    data/models/lstm.pt existe — ignoré sinon ;
+    3. alertes    — app/alerts : dernier composite en base AVANT le
+                    remplacement comparé au nouveau ; un changement de
+                    palier sur une entreprise suivie = un e-mail
+                    récapitulatif par utilisateur en fin de job (envoi
+                    désactivé sans SMTP_HOST, cf. app/alerts/mailer).
 
 Mode batch historique (amorçage du manifeste) : les scripts fetch_phase0
 → fetch_prices → fetch_submissions → load_postgres restent la voie du
@@ -24,6 +29,7 @@ Invocation (depuis la racine du projet, pour que `app` soit importable) :
     uv run python -m app.jobs.nightly              # refresh + signaux
     uv run python -m app.jobs.nightly --no-refresh # signaux seuls (offline)
     uv run python -m app.jobs.nightly --limit 3    # pilote sur 3 entreprises
+    uv run python -m app.jobs.nightly --no-alerts  # sans détection d'alertes
 Le drapeau `-m` est important : il ajoute le répertoire courant au
 sys.path ; lancer `python app/jobs/nightly.py` directement échouerait sur
 les imports `app.*`.
@@ -49,15 +55,23 @@ from collections import Counter
 from datetime import date
 from pathlib import Path
 
+from app.alerts.changes import (
+    LevelChange,
+    detect_level_change,
+    latest_composite_of,
+)
+from app.alerts.mailer import alerts_enabled, send_digests
 from app.config import settings
 from app.db.repo import (
     annual_forms_for_company,
+    company_watcher_emails,
     fetch_event_rows,
     fetch_fact_rows,
     fetch_insider_rows,
     fetch_price_rows,
     get_conn,
     has_form4_filings,
+    latest_composite,
     list_companies,
     replace_company_signals,
 )
@@ -68,12 +82,19 @@ from app.ingest.refresh import refresh_company
 from app.signals.compute import compute_company
 
 
-def main(refresh: bool = True, limit: int | None = None) -> None:
+def main(
+    refresh: bool = True, limit: int | None = None, notify: bool = False
+) -> None:
     """`refresh=False` = signaux seuls (tests, offline) ; `limit` = pilote.
 
     Les paramètres sont explicites (pas de lecture sys.argv ici) : un test
     qui appelle main() ne doit pas dépendre de l'argv de pytest — sinon
     `--no-refresh` absent de pytest.jsonlanderait le réseau.
+
+    `notify` vaut False par défaut pour la même raison : un test qui appelle
+    main() ne doit JAMAIS envoyer d'e-mail, même si le `.env` du poste
+    configure un SMTP. Seule la ligne de commande l'active (sauf
+    `--no-alerts`).
     """
     # cp1252 : les noms d'entreprises et les messages accentués ne doivent
     # pas planter la console Windows (mesuré : UnicodeEncodeError).
@@ -88,6 +109,11 @@ def main(refresh: bool = True, limit: int | None = None) -> None:
         computed_at = date.today().isoformat()
         totals: Counter = Counter()
         n_errors = 0
+        # Alertes en attente : e-mail -> changements de palier. Envoyées en
+        # fin de job pour regrouper toutes les entreprises d'un utilisateur
+        # dans UN seul message.
+        pending: dict[str, list[LevelChange]] = {}
+        n_changes = 0
 
         # Signal deep learning (phase 2) : l'artefact est chargé UNE fois
         # pour tout le lot (cache interne à app.dl.infer). Absent ou
@@ -116,6 +142,10 @@ def main(refresh: bool = True, limit: int | None = None) -> None:
                         note += f" | ERREURS: {'; '.join(stats['errors'])}"
                         n_errors += 1
                     print(f"  {company['ticker'] or company['cik']}: {note}")
+
+                # Niveau AVANT recalcul : replace_company_signals va le
+                # purger, c'est le seul moment où il est encore lisible.
+                before = latest_composite(conn, company["id"]) if notify else None
 
                 annual_forms = set(annual_forms_for_company(conn, company["id"]))
                 is_foreign_filer = bool({"20-F", "40-F"} & annual_forms)
@@ -206,11 +236,46 @@ def main(refresh: bool = True, limit: int | None = None) -> None:
                     f"  !! {company['ticker'] or company['cik']}: "
                     f"{type(exc).__name__}: {exc} — ignorée, entreprise suivante"
                 )
+                continue
+
+            # Détection APRÈS le commit : une alerte ne porte que sur un
+            # niveau réellement écrit. Détecter avant exposerait à un doublon
+            # (commit raté -> la nuit suivante redétecte le même changement).
+            if notify:
+                try:
+                    change = detect_level_change(
+                        company, before, latest_composite_of(results)
+                    )
+                    if change is not None:
+                        n_changes += 1
+                        watchers = company_watcher_emails(conn, company["id"])
+                        conn.commit()  # ferme la transaction de lecture
+                        for email in watchers:
+                            pending.setdefault(email, []).append(change)
+                        # Journal sans adresse e-mail (journaux Actions publics).
+                        print(
+                            f"    alerte: {change.before} -> {change.after} "
+                            f"({len(watchers)} abonné(s))"
+                        )
+                except Exception as exc:
+                    conn.rollback()
+                    print(
+                        f"  !! {company['ticker'] or company['cik']}: alerte "
+                        f"non préparée ({type(exc).__name__}) — signaux conservés"
+                    )
 
         print(f"\nSignaux recalculés ({sum(totals.values())} lignes, "
               f"seuils: {dict(sorted(totals.items()))}) — {computed_at}")
         if n_errors:
             print(f"Entreprises en erreur : {n_errors} (voir détails ci-dessus)")
+        if notify:
+            stats = send_digests(pending)
+            mode = "" if alerts_enabled() else " — envoi désactivé (SMTP_HOST vide)"
+            print(
+                f"Alertes : {n_changes} changement(s) de palier, "
+                f"{len(pending)} destinataire(s), {stats['sent']} envoyé(s), "
+                f"{stats['failed']} en échec{mode}"
+            )
     finally:
         conn.close()
 
@@ -226,4 +291,5 @@ if __name__ == "__main__":
             if "--limit" in sys.argv
             else None
         ),
+        notify="--no-alerts" not in sys.argv,
     )
