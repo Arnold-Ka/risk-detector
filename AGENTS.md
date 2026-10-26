@@ -31,7 +31,7 @@ Early-warning financial-risk tool for US listed companies. Product spec: `Feuill
 | Nightly | `uv run python -m app.jobs.nightly`; `--no-refresh` = signals only, `--limit N` = pilot |
 | Frontend | `pnpm --dir frontend dev` · `pnpm --dir frontend lint` · `pnpm --dir frontend build` |
 
-Run the test, frontend lint and frontend build commands before a PR; current GitHub Actions workflows do not run those checks.
+Run the test, frontend lint and frontend build commands before a PR. `.github/workflows/ci.yml` runs them on every push/PR against an empty, schema-only PostgreSQL, so data-dependent tests skip there; a green CI does not replace a local run on loaded data.
 
 In the sequences below, bare script names mean `uv run python -m scripts.<name>`:
 

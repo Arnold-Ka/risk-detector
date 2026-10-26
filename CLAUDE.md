@@ -21,4 +21,4 @@ The pipeline reads left to right; each stage lives in its own package under `app
 
 Evaluation lives in `app/backtest/` (`cohort.py`, `metrics.py`) driven by `scripts/backtest.py` and `scripts/tune_weights.py`; README holds the baseline metrics any weight change must be compared against.
 
-CI: `.github/workflows/nightly.yml` (scheduled nightly job) and `keepalive.yml` (pings the Render API `/health` every 14 min to avoid free-tier spin-down); neither runs tests, lint or build.
+Workflows: `ci.yml` (pytest on an empty schema-only PostgreSQL + frontend lint/build, every push/PR), `nightly.yml` (scheduled nightly job) and `keepalive.yml` (pings the Render API `/health` every 14 min to avoid free-tier spin-down).

@@ -1,0 +1,97 @@
+# Vérifications à chaque push et pull request : tests backend, lint et
+# build frontend — les trois contrôles exigés avant une PR (AGENTS.md).
+#
+# Base PostgreSQL VIERGE (service éphémère, schéma seul) : les tests qui
+# exigent des données ingérées ou des signaux calculés se mettent en skip,
+# ceux de la liste de suivi s'exécutent (localhost). C'est voulu : aucun
+# secret de base hébergée n'est exposé ici, et le test du nightly — qui
+# supprime/réinsère des signaux — ne touche qu'une base jetable.
+#
+# Le cache data/ n'existe pas en CI : les tests d'intégration qui en
+# dépendent se mettent en skip. Seul tests/test_events.py peut interroger
+# EDGAR sur cache manquant ; il reçoit le User-Agent du secret
+# SEC_USER_AGENT (même secret que nightly.yml) et se met en skip en cas
+# d'échec réseau (PR depuis un fork, secret absent).
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# Un nouveau push sur la même branche annule le run précédent.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: risk
+          POSTGRES_PASSWORD: risk # identifiants jetables du conteneur de CI
+          POSTGRES_DB: risks
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U risk -d risks"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://risk:risk@localhost:5432/risks
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || 'risk-detector-ci ci@example.invalid' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      # Pas de migrations : schema.sql est la source de vérité, rejouée
+      # sur la base vierge comme le fait docker-entrypoint-initdb.d en local.
+      - name: Schéma PostgreSQL
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f app/db/schema.sql
+
+      # --frozen : échoue si uv.lock n'est pas à jour au lieu de le réécrire.
+      # torch est inclus (tests du modèle et de l'attribution SHAP).
+      - name: Dépendances Python
+        run: uv sync --frozen
+
+      - name: Tests
+        run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+
+      # Version de pnpm lue depuis "packageManager" de frontend/package.json.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Dépendances
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      # Sans .env.local ni API joignable : le build doit rester autonome
+      # (Clerk désactivé, cf. proxy.ts). Vérifié localement sur un checkout
+      # propre avant l'ajout de ce workflow.
+      - name: Build
+        run: pnpm build
