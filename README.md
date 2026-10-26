@@ -53,9 +53,9 @@ approches se complètent, le classique garde la meilleure détection à 6 mois.
 ## Architecture
 
 - **Backend** — Python 3.14, FastAPI, PostgreSQL 17 (SQL brut via psycopg,
-  pas d'ORM). L'API est **en lecture seule** : tous les signaux sont
-  précalculés chaque nuit (`app/jobs/nightly.py`) après rafraîchissement
-  EDGAR/Yahoo, l'API ne fait que servir.
+  pas d'ORM). Les routes publiques lisent les signaux précalculés chaque nuit
+  (`app/jobs/nightly.py`) ; les routes privées de liste de suivi ne modifient
+  que les données utilisateur et exigent une session Clerk vérifiée côté Next.
 - **Frontend** — Next.js 16 (App Router, Tailwind v4, React 19), rendu côté
   serveur, sitemap + robots dynamiques pour l'indexation.
 - **Données** — SEC EDGAR respecte la limite de 10 requêtes/s (User-Agent
@@ -88,12 +88,20 @@ uv run python -m scripts.load_postgres
 uv run python -m app.jobs.nightly --no-refresh
 
 # 5. API + site
-uv run uvicorn app.api.main:app --reload      # → http://localhost:8000/health
+uv run uvicorn app.api.main:app --reload --port 8011 # → http://localhost:8011/health
 pnpm --dir frontend install
 pnpm --dir frontend dev                       # → http://localhost:3000
 ```
 
-Tests : `uv run pytest` (172 tests).
+La recherche et les fiches publiques fonctionnent sans compte. Pour activer
+les comptes et la liste de suivi en local, copier `frontend/.env.example` vers
+`frontend/.env.local`, configurer les clés Clerk et partager la même valeur de
+`WATCHLIST_API_SECRET` entre ce fichier et le `.env` racine.
+
+Tests : `uv run pytest` (184 tests collectés).
+
+Mise en production (GitHub Actions + Render + Vercel + Neon + Clerk) :
+voir [docs/DEPLOY.md](docs/DEPLOY.md).
 
 Pour charger la cohorte complète du backtest (875 entreprises, ~1 h, réseau) :
 
