@@ -20,5 +20,8 @@ data/backtest/*_facts.csv
 data/backtest/*_ratios.csv
 # Jeu de données DL (régénérable via scripts/export_dataset.py)
 data/backtest/dl_dataset.csv
-# Artefact du modèle séquentiel (régénérable via scripts/train_lstm.py)
-data/models/
+# Artefact du modèle séquentiel : VERSIONNÉ (111 Ko) pour que le nightly
+# hébergé (GitHub Actions) publie aussi les signaux lstm — voir docs/DEPLOY.md.
+# Se régénère par scripts/train_lstm.py.
+# (dump de migration PostgreSQL, cf. docs/DEPLOY.md — données sensibles)
+*.dump

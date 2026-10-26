@@ -1,0 +1,17 @@
+# Ne rien envoyer à la construction d'image qui ne soit nécessaire à l'API.
+.venv/
+.git/
+.github/
+data/
+frontend/
+tests/
+scripts/
+docs/
+*.ipynb
+.env
+.env.example
+AGENTS.md
+README.md
+CONTRIBUTING.md
+docker-compose.yml
+render.yaml

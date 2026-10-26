@@ -17,7 +17,8 @@ Règles produit conservées :
     AGENTS.md : un signal DL ne remplace les classiques que s'il les
     bat au backtest — ce n'est pas le cas à det6).
 
-Artefact (data/models/, gitignoré — régénérable par train_lstm) :
+Artefact (data/models/, produit par train_lstm et requis dans le checkout
+du nightly hébergé) :
   - lstm.pt        state_dict PyTorch (weights_only : sérialisation
                     limitée aux tenseurs, pas de pickle exotique) ;
   - lstm.meta.json seuil de détection (D90 des témoins de validation,

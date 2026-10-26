@@ -1,0 +1,17 @@
+{
+  "model": "lstm",
+  "trained_at": "2026-10-14",
+  "input_dim": 40,
+  "threshold": 0.61056,
+  "val_auc": 0.869,
+  "test_auc": 0.9071,
+  "min_years": 3,
+  "max_years": 5,
+  "horizon_days": 365,
+  "seed": 42,
+  "split": {
+    "train": 6456,
+    "val": 1589,
+    "test": 1994
+  }
+}

@@ -1,0 +1,54 @@
+# Recalcul nocturne des signaux vers la base hébergée (Neon).
+#
+# C'est CE workflow qui fait tourner le produit sans machine locale :
+# refresh EDGAR/Yahoo (TTL respectés, cadran 10 req/s du client) puis
+# compute + inférence LSTM + écriture PostgreSQL. Secrets requis (voir
+# docs/DEPLOY.md) : DATABASE_URL (Neon), SEC_USER_AGENT (SEC).
+#
+# Premier run lent (~30-60 min : cache EDGAR vide + installation uv) ;
+# les runs suivants sont majoritairement des hits de cache et durent
+# ~10-20 min. Le cache data/cache est roulant (restore-keys) : si le
+# dépôt approche la limite de 10 Go, purger les entrées de cache GitHub.
+name: nightly
+
+on:
+  schedule:
+    - cron: "30 5 * * *" # 05:30 UTC chaque nuit (06:30 hiver / 07:30 été en France)
+  workflow_dispatch: # relance manuelle depuis l'onglet Actions
+
+jobs:
+  signals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      # uv avec le cache persistant des paquets (uv.lock = clé du cache) ;
+      # Python 3.14 est téléchargé automatiquement par uv (requires-python).
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      # Cache EDGAR/Yahoo entre les nuits : submissions (TTL 20 h) et
+      # cours sont réutilisés ; companyfacts est refetché par design
+      # (refresh_company force max_age=0), inutile de le cacher.
+      - name: Cache dépôts SEC / cours déjà vus
+        uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: edgar-cache-${{ github.run_id }}
+          restore-keys: |
+            edgar-cache-
+
+      - name: "Installation des dépendances (torch inclus : inférence DL)"
+        run: uv sync --frozen
+
+      - name: Nightly (refresh + signaux + inférence)
+        run: uv run python -m app.jobs.nightly
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+
+      # Repli silencieux si l'artefact LSTM est absent (non versionné sur
+      # une branche de test) : le nightly saute le DL et écrit quand même
+      # les signaux classiques — comportement voulu par app/dl/infer.py.

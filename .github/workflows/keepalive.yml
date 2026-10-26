@@ -1,0 +1,25 @@
+# Garde l'API Render éveillée : plan gratuit = spin-down après 15 min
+# d'inactivité et ~1 min de réveil (mauvais pour l'UX comme pour le
+# référencement). Un ping /health toutes les 14 min maintient le service
+# chaud — et consomme 744 h/mois des 750 h gratuites allouées (31 j = 744 h :
+# l'allocation tient, un spin-down accidentel en consommerait même moins).
+#
+# L'URL de base est une VARIABLE de dépôt (Settings > Variables),
+# clé API_URL, ex. https://risk-detector-api.onrender.com
+name: keepalive
+
+on:
+  schedule:
+    - cron: "*/14 * * * *" # toutes les 14 min → toujours < 15 min d'inactivité
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Réveiller / maintenir l'API
+        run: |
+          curl -fsS --max-time 120 "${{ vars.API_URL }}/health" \
+            && echo " — API en ligne" \
+            || { echo "ÉCHEC du ping : vérifier vars.API_URL et le service Render"; exit 1; }
