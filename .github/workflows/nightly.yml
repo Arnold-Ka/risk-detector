@@ -25,7 +25,7 @@ jobs:
 
       # uv avec le cache persistant des paquets (uv.lock = clé du cache) ;
       # Python 3.14 est téléchargé automatiquement par uv (requires-python).
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.2 # astral ne publie pas d'étiquette flottante v10
         with:
           enable-cache: true
 
