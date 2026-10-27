@@ -15,6 +15,10 @@ on:
 
 jobs:
   ping:
+    # Ignoré (et non en échec) tant que la variable API_URL n'est pas
+    # définie : sans elle, curl visait "/health" et le job échouait toutes
+    # les 14 min, avec un e-mail d'échec GitHub à chaque fois.
+    if: vars.API_URL != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
