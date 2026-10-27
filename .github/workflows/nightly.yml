@@ -62,3 +62,13 @@ jobs:
       # Repli silencieux si l'artefact LSTM est absent (non versionné sur
       # une branche de test) : le nightly saute le DL et écrit quand même
       # les signaux classiques — comportement voulu par app/dl/infer.py.
+
+      # Contrôle de bout en bout : l'API publique (Render) voit-elle des
+      # signaux du jour dans la base hébergée ? /health/data répond 503 si
+      # les signaux ont plus d'un jour ou si la base est injoignable.
+      # always() : exécuté même si le nightly a échoué, pour savoir si la
+      # base reste servie avec des données de la veille. Ignoré tant que la
+      # variable API_URL n'est pas définie (mêmes réglages que keepalive).
+      - name: Fraîcheur des données servies par l'API
+        if: always() && vars.API_URL != ''
+        run: curl --fail-with-body --silent --show-error --retry 3 --retry-delay 20 --retry-all-errors --max-time 60 "${{ vars.API_URL }}/health/data"

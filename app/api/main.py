@@ -13,12 +13,17 @@ Règles respectées ici :
     entreprise sans risque).
 """
 
+from datetime import date
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.api.watchlist import router as watchlist_router
+from app.health import freshness
 from app.db.repo import (
+    data_freshness,
     get_company,
     get_conn,
     list_coverage_companies,
@@ -58,6 +63,35 @@ def health():
     du service db).
     """
     return {"status": "ok"}
+
+
+@app.get("/health/data")
+def health_data():
+    """Sonde de fraîcheur des DONNÉES : 200 si les signaux datent d'au plus
+    un jour, 503 sinon (périmés, base vide ou injoignable).
+
+    Séparée de /health exprès : le keepalive appelle /health toutes les 14
+    min, et une requête Postgres à chaque fois réveillerait Neon en
+    permanence (scale-to-zero perdu). Celle-ci est appelée une fois par
+    nuit, après le nightly, et par toute sonde de supervision externe.
+    """
+    try:
+        conn = get_conn()
+        try:
+            snapshot = data_freshness(conn)
+        finally:
+            conn.close()
+    except Exception as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "db_unavailable", "error": type(exc).__name__},
+        )
+    body = {
+        **freshness(snapshot["last_computed"], date.today()),
+        "companies": snapshot["companies"],
+        "companies_with_level": snapshot["companies_with_level"],
+    }
+    return JSONResponse(status_code=200 if body["status"] == "ok" else 503, content=body)
 
 
 @app.get("/search")

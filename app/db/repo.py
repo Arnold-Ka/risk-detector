@@ -779,6 +779,32 @@ def add_watchlist_company(
         return "added"
 
 
+def data_freshness(conn) -> dict:
+    """Date du dernier calcul et couverture, pour /health/data.
+
+    max(computed_at) = date de la dernière exécution réussie du nightly sur
+    au moins une entreprise ; companies_with_level compte les entreprises
+    qui ont un composite (un univers chargé mais jamais calculé reste
+    visible : companies > 0, companies_with_level = 0).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                (SELECT max(computed_at) FROM signals),
+                (SELECT count(*) FROM companies),
+                (SELECT count(DISTINCT company_id) FROM signals
+                 WHERE signal_type = 'composite')
+            """
+        )
+        last_computed, companies, with_level = cur.fetchone()
+    return {
+        "last_computed": last_computed,
+        "companies": companies,
+        "companies_with_level": with_level,
+    }
+
+
 def latest_composite(conn, company_id: str) -> dict | None:
     """Dernier composite EN BASE (exercice le plus récent), ou None.
 

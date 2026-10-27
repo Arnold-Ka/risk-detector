@@ -17,7 +17,7 @@ The pipeline reads left to right; each stage lives in its own package under `app
 5. **DL** — `app/dl/` (`dataset.py`, `model.py`, `infer.py`, `attribution.py`) produces the separate `lstm` signal from `data/models/lstm.pt`; trained by `scripts/train_lstm.py`.
 6. **Persist / orchestrate** — `app/jobs/nightly.py` (refresh → compute → replace signals per company → tier-change alerts); `app/db/repo.py` holds all SQL; schema in `app/db/schema.sql`.
 7. **Alerts** — `app/alerts/changes.py` (pure detection + digest text) and `mailer.py` (stdlib SMTP, disabled without `SMTP_HOST`/`ALERT_FROM_EMAIL`).
-8. **Serve** — `app/api/main.py` (public read-only routes) and `app/api/watchlist.py` (`/me/watchlist`, authenticated via the shared secret).
+8. **Serve** — `app/api/main.py` (public read-only routes; `/health` liveness, `/health/data` freshness via `app/health.py`) and `app/api/watchlist.py` (`/me/watchlist`, authenticated via the shared secret).
 9. **Frontend** — `frontend/` Next.js app; `lib/api.ts` calls the FastAPI backend, `lib/server-watchlist.ts` + `app/api/` route handlers forward Clerk-verified watchlist calls server-side with `WATCHLIST_API_SECRET`; `proxy.ts` is the Next 16 request proxy (Clerk middleware, no-op when Clerk keys are absent).
 
 Evaluation lives in `app/backtest/` (`cohort.py`, `metrics.py`) driven by `scripts/backtest.py` and `scripts/tune_weights.py`; README holds the baseline metrics any weight change must be compared against.

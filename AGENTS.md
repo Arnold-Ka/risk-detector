@@ -44,7 +44,7 @@ In the sequences below, bare script names mean `uv run python -m scripts.<name>`
 
 - **Never run the full suite with a hosted/production `DATABASE_URL`.** `test_nightly_fills_signals_and_is_idempotent` runs nightly twice and deletes/reinserts signals in the configured DB; use a local/disposable DB.
 - DB-dependent tests in `test_api`, `test_repo` and `test_nightly` skip when PostgreSQL or required data is unavailable. `main(refresh=False)` keeps nightly tests offline, but the full suite is not guaranteed network-free: submission tests can fetch EDGAR on a cache miss.
-- Nightly logs per-company failures and continues without a failing exit status; `/health` does not query PostgreSQL. A green Action or health response does not prove data health.
+- Nightly logs per-company failures and continues, then exits 1 when `app/health.run_problems` trips (>20 % compute failures, >50 % SEC `recent:` failures, or zero companies); Yahoo price errors stay informational because delisted bankruptcies make them routine. `/health` is liveness only and must stay DB-free (keepalive would keep Neon awake); data freshness is `/health/data` (503 when signals are older than one day, empty, or the DB is down), checked by the nightly workflow.
 
 ## Architecture and invariants
 

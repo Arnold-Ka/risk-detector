@@ -164,6 +164,11 @@ Lancer le nightly manuellement une première fois :
 ## 6. Recette
 
 1. `https://<url>.onrender.com/health` → `{"status": "ok"}` (ou équivalent).
+   Après le premier nightly : `https://<url>.onrender.com/health/data` →
+   HTTP 200 avec `"status": "ok"` et `companies_with_level` proche de
+   `companies`. Un 503 signifie des signaux de plus d'un jour (`stale`),
+   une base sans signaux (`empty`) ou une base injoignable
+   (`db_unavailable`).
 2. `https://<projet>.vercel.app` → recherche d'entreprise fonctionnelle
    (elle appelle l'API Render), fiche **Apple (AAPL)** complète avec
    signaux, graphique et lien « dépôt source ».
@@ -193,6 +198,11 @@ migration sans réécriture, mêmes points d'entrée.
 ## 8. Opérations courantes
 
 - **Relancer le nightly** : Actions → nightly → *Run workflow*.
+- **Nightly rouge** : lire la dernière ligne `ÉCHEC du nightly : …`. Plus
+  de 20 % d'erreurs de calcul ou plus de 50 % d'échecs SEC (souvent un
+  `SEC_USER_AGENT` refusé) font échouer le job ; les signaux des entreprises
+  réussies restent écrits. Une étape « Fraîcheur » rouge seule signifie que
+  l'API sert des données de plus d'un jour.
 - **Déployer l'API après un push** : automatique (`autoDeploy: true`) ;
   sinon Render → service → *Manual Deploy*.
 - **Changer `SEC_USER_AGENT`** : Secret GitHub + env Render (deux endroits).

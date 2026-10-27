@@ -78,14 +78,20 @@ from app.db.repo import (
 from app.dl import infer as dl_infer
 from app.edgar.client import EdgarClient
 from app.edgar.yahoo import cached_splits
+from app.health import run_problems
 from app.ingest.refresh import refresh_company
 from app.signals.compute import compute_company
 
 
 def main(
     refresh: bool = True, limit: int | None = None, notify: bool = False
-) -> None:
+) -> list[str]:
     """`refresh=False` = signaux seuls (tests, offline) ; `limit` = pilote.
+
+    Renvoie les problèmes bloquants de l'exécution (app.health.run_problems) :
+    [] = saine. La ligne de commande en fait un code de sortie 1 pour que
+    l'Action GitHub passe au rouge au lieu de rester verte sur une base
+    à moitié recalculée.
 
     Les paramètres sont explicites (pas de lecture sys.argv ici) : un test
     qui appelle main() ne doit pas dépendre de l'argv de pytest — sinon
@@ -108,7 +114,13 @@ def main(
             companies = companies[:limit]
         computed_at = date.today().isoformat()
         totals: Counter = Counter()
-        n_errors = 0
+        # Compteurs séparés : seuls les échecs de calcul et les échecs SEC
+        # systémiques sont bloquants (cf. app/health.py) ; les autres
+        # erreurs de refresh (cours Yahoo d'entreprises radiées…) sont
+        # attendues et restent informatives.
+        compute_errors = 0
+        sec_errors = 0
+        refresh_errors = 0
         # Alertes en attente : e-mail -> changements de palier. Envoyées en
         # fin de job pour regrouper toutes les entreprises d'un utilisateur
         # dans UN seul message.
@@ -140,7 +152,11 @@ def main(
                     )
                     if stats["errors"]:
                         note += f" | ERREURS: {'; '.join(stats['errors'])}"
-                        n_errors += 1
+                        refresh_errors += 1
+                        # « recent: » = la page des dépôts SEC elle-même a
+                        # échoué (refresh.py) : symptôme d'une panne globale.
+                        if any(e.startswith("recent:") for e in stats["errors"]):
+                            sec_errors += 1
                     print(f"  {company['ticker'] or company['cik']}: {note}")
 
                 # Niveau AVANT recalcul : replace_company_signals va le
@@ -231,7 +247,7 @@ def main(
                 print(f"    par type: {dict(sorted(by_type.items()))}")
             except Exception as exc:
                 conn.rollback()
-                n_errors += 1
+                compute_errors += 1
                 print(
                     f"  !! {company['ticker'] or company['cik']}: "
                     f"{type(exc).__name__}: {exc} — ignorée, entreprise suivante"
@@ -266,8 +282,12 @@ def main(
 
         print(f"\nSignaux recalculés ({sum(totals.values())} lignes, "
               f"seuils: {dict(sorted(totals.items()))}) — {computed_at}")
-        if n_errors:
-            print(f"Entreprises en erreur : {n_errors} (voir détails ci-dessus)")
+        print(
+            f"Bilan : {len(companies)} entreprises, {compute_errors} en erreur "
+            f"de calcul, {refresh_errors} avec erreurs de refresh "
+            f"(dont {sec_errors} échecs SEC) — détails ci-dessus"
+        )
+        problems = run_problems(len(companies), compute_errors, sec_errors)
         if notify:
             stats = send_digests(pending)
             mode = "" if alerts_enabled() else " — envoi désactivé (SMTP_HOST vide)"
@@ -276,6 +296,7 @@ def main(
                 f"{len(pending)} destinataire(s), {stats['sent']} envoyé(s), "
                 f"{stats['failed']} en échec{mode}"
             )
+        return problems
     finally:
         conn.close()
 
@@ -284,7 +305,7 @@ if __name__ == "__main__":
     # Active `python -m app.jobs.nightly` ; argv parsé ICI (et non dans
     # main) pour que les tests appellent main(refresh=False) sans dépendre
     # de l'argv de pytest.
-    main(
+    problems = main(
         refresh="--no-refresh" not in sys.argv,
         limit=(
             int(sys.argv[sys.argv.index("--limit") + 1])
@@ -293,3 +314,8 @@ if __name__ == "__main__":
         ),
         notify="--no-alerts" not in sys.argv,
     )
+    if problems:
+        # Code 1 = Action rouge. Les signaux des entreprises réussies sont
+        # déjà commités : l'échec signale, il n'annule rien.
+        print("ÉCHEC du nightly : " + " ; ".join(problems))
+        sys.exit(1)
