@@ -6,6 +6,9 @@ partir de leurs dépôts publics (SEC EDGAR) et de leurs cours de bourse :
 niveau de risque par exercice (faible → modéré → élevé → critique), chaque
 score remontant au dépôt exact qui l'a produit.
 
+**En ligne :** <https://risk-detector-two.vercel.app> · résultats et
+méthode : <https://risk-detector-two.vercel.app/methodology>
+
 > **Avertissement** — outil informatif à vocation pédagogique. Il ne constitue
 > ni un conseil en investissement, ni une recommandation d'achat ou de vente.
 > Les scores sont des indicateurs de qualité d'information, pas des

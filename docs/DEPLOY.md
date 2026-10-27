@@ -23,30 +23,33 @@ tourne dans GitHub Actions, l'API et le site sont toujours allumés.
 
 ## 1. GitHub — publier le dépôt
 
-`gh` n'est pas encore installé :
-
-```powershell
-winget install GitHub.cli
-# rouvrir le terminal, puis :
-gh auth login          # suivre l'assistant (browser)
-gh repo create risk-detector --public --source=. --remote=origin --push
-```
-
-Variante sans `gh` : créer le dépôt vide sur github.com (bouton
-« New repository », public, sans README) puis :
+`gh` n'est pas nécessaire (ni de droits administrateur) : Git for Windows
+embarque Git Credential Manager, qui ouvre la connexion GitHub dans le
+navigateur au premier push. Créer le dépôt vide sur github.com (bouton
+« New repository », public, sans README, licence ni `.gitignore`) puis :
 
 ```powershell
 git remote add origin https://github.com/<vous>/risk-detector.git
 git push -u origin master
 ```
 
+Si `origin` a été ajouté avec une mauvaise URL (`remote origin already
+exists`), la corriger plutôt que de le rajouter :
+`git remote set-url origin https://github.com/<vous>/risk-detector.git`.
+
+Avant le premier push d'un dépôt public : l'adresse e-mail de chaque commit
+devient publique. Vérifier `git log --format='%ae' | sort | uniq -c` et
+réécrire l'historique tant que rien n'a été poussé si besoin.
+
 ## 2. Neon — la base de données
 
 1. Compte sur <https://neon.tech> → **Create project** (ex. `risk-detector`,
    région **AWS us-east-2 / Ohio** pour coller à Render plus bas).
-2. Noter le mot de passe de l'utilisateur, puis récupérer les **deux**
-   chaînes de connexion de la page *Details* : l'endpoint **pooled** (pour
-   l'API et le nightly) et le direct (pour la migration).
+2. Bouton **Connect** du tableau de bord : récupérer les **deux** chaînes
+   de connexion (le mot de passe, généré par Neon, y est inclus — *Show
+   password* ou *Copy snippet*). « Connection pooling » activé = hôte en
+   `-pooler`, pour l'API et le nightly ; désactivé = chaîne directe, pour la
+   migration. Mot de passe perdu : *Roles → neondb_owner → Reset password*.
 3. Appliquer le schéma (fichier `app/db/schema.sql`) : soit l'onglet
    **SQL Editor** de Neon (coller le contenu du fichier), soit automatique
    lors de la migration ci-dessous (le dump contient le schéma).
@@ -60,12 +63,18 @@ la base locale doit tourner (`docker compose up -d --wait`) :
 docker compose exec -T db bash -c "pg_dump -U risk -d risks --no-owner --no-privileges -Fc > /tmp/risks.dump"
 docker compose cp db:/tmp/risks.dump ./risks.dump
 
-# 2. restauration via l'image postgres:17 (aucun client psql local requis)
-$env:NEON_URL = "postgresql://<user>:<pass>@<host-neon>/neondb?sslmode=require&channel_binding=require"
+# 2. restauration via l'image postgres:17 (aucun client psql local requis).
+#    À taper dans un terminal PowerShell ordinaire, PAS via le préfixe « ! »
+#    d'une session d'assistant : la chaîne contient le mot de passe et
+#    finirait dans l'historique de la conversation. Guillemets simples : la
+#    chaîne contient & et ? que PowerShell interpréterait. Compter 5 à 30
+#    min sans affichage (envoi vers us-east-2 puis reconstruction des index).
+$env:NEON_URL = 'postgresql://<user>:<pass>@<host-neon>/neondb?sslmode=require&channel_binding=require'
 docker run --rm --mount "type=bind,source=$(Resolve-Path .\risks.dump),target=/dump.dump,ro" `
   postgres:17 pg_restore --no-owner --no-privileges --dbname="$env:NEON_URL" /dump.dump
 
 # 3. nettoyage (le fichier est gitignoré, mais il contient des données : le supprimer)
+Remove-Item Env:NEON_URL
 Remove-Item .\risks.dump
 ```
 
@@ -75,8 +84,10 @@ Vérification : dans le SQL Editor de Neon,
 ## 3. Render — l'API
 
 1. Compte sur <https://render.com> → **New + → Blueprint** → connecter le
-   dépôt GitHub : `render.yaml` est détecté (service web Docker, région à
-   choisir **Ohio**).
+   dépôt GitHub : `render.yaml` est détecté (service web Docker, région
+   **Ohio** fixée dans le fichier, à côté de Neon). Une erreur du type
+   `services[0].envVars[0]` vient du fichier, pas de la saisie : les
+   variables d'un blueprint se déclarent avec `key:` (et non `id:`).
 2. À la création, saisir les variables demandées :
     - `DATABASE_URL` : chaîne **pooled** de Neon ;
     - `SEC_USER_AGENT` : `Prénom Nom email@exemple.com` (l'API n'effectue
@@ -126,6 +137,14 @@ Vérification : dans le SQL Editor de Neon,
    n'est pas encore en ligne — recommencer (ou *Retry*) une fois l'API Render
    validée. Puis déployer **une seconde fois** après avoir renseigné
    `NEXT_PUBLIC_SITE_URL` si elle n'était pas connue au premier build.
+7. **Vérifier l'adresse attribuée.** Si le nom de projet est déjà pris,
+   Vercel en donne une autre (ex. `risk-detector-two.vercel.app`). Reporter
+   cette adresse exacte dans `FRONTEND_ORIGINS` sur Render : sinon l'API
+   répond 400 aux appels du navigateur, et la recherche de l'accueil comme
+   la page Couverture restent vides, alors que les fiches (rendues côté
+   serveur) fonctionnent — symptôme trompeur. Contrôle :
+   `curl -X OPTIONS -H "Origin: https://<site>" -H "Access-Control-Request-Method: GET" https://<api>/search?q=apple`
+   doit renvoyer `access-control-allow-origin: https://<site>`.
 
 ## 5. GitHub — secrets et workflows
 
