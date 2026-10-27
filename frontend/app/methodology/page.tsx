@@ -10,6 +10,8 @@
 //     (app/backtest/metrics.build_snapshots + pick_snapshot : un exercice
 //     n'est connu qu'au dépôt le plus tardif de ses composantes), calculés
 //     le 2026-10-27 sur la cohorte data/backtest/companies.json.
+//   - test hors échantillon : `uv run python -m scripts.validate_oos`
+//     (poids appris sur 2015-2020, mesurés sur 2021-2025), 2026-10-27.
 // Les échecs sont affichés au même rang que les réussites : c'est ce qui
 // rend la page crédible, et c'est la vérité du backtest.
 
@@ -87,6 +89,15 @@ const MISSED: Example[] = [
   { name: "Hertz", bankruptcy: "2020-05-26", at12: "faible", at6: "faible", leadMonths: null, note: "choc brutal du COVID-19" },
   { name: "GNC", bankruptcy: "2020-06-24", at12: "faible", at6: "faible", leadMonths: null },
 ];
+
+// --- Test hors échantillon (scripts/validate_oos, période 2021-2025) --------
+// Score = détection 6 mois − fausses alertes/an, le critère d'apprentissage.
+const OOS_ROWS = [
+  { label: "Poids appris sur 2015-2020 uniquement", det6: "80,9 %", fpr: "12,9 %", score: "68,0" },
+  { label: "Poids utilisés par le site", det6: "74,9 %", fpr: "6,9 %", score: "68,0" },
+  { label: "Tous les poids égaux", det6: "79,9 %", fpr: "12,2 %", score: "67,7" },
+];
+const OOS_TEST_BANKRUPTCIES = 199;
 
 // Signaux du niveau global, dans l'ordre de la fiche (le LSTM est à part).
 const COMPOSITE_SIGNALS: SignalType[] = [
@@ -266,6 +277,52 @@ export default function MethodologyPage() {
             </li>
           ))}
         </ol>
+      </section>
+
+      <section aria-labelledby="oos-heading" className="overflow-hidden rounded-2xl border border-line bg-white">
+        <div className="border-b border-line bg-slate-50 p-5 sm:p-6">
+          <p className="text-xs font-bold tracking-[0.12em] text-brand">CONTRÔLE</p>
+          <h2 id="oos-heading" className="mt-1 text-xl font-semibold text-ink">
+            Et si les poids étaient trop ajustés aux données ?
+          </h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+            Les poids ont été réglés sur la même cohorte que celle qui sert à
+            les mesurer, ce qui peut flatter les résultats. Pour le vérifier,
+            nous avons refait le réglage comme si nous étions fin 2020 — en ne
+            voyant que les faillites de 2015 à 2020 — puis mesuré le résultat
+            sur les {OOS_TEST_BANKRUPTCIES} faillites de 2021 à 2025, jamais
+            vues pendant ce réglage.
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[34rem] text-left text-sm">
+            <thead className="text-xs text-muted">
+              <tr className="border-b border-line">
+                <th scope="col" className="px-5 py-3 font-semibold">Faillites 2021-2025</th>
+                <th scope="col" className="px-3 py-3 font-semibold">Signalées 6 mois avant</th>
+                <th scope="col" className="px-3 py-3 font-semibold">Fausses alertes / an</th>
+                <th scope="col" className="px-5 py-3 font-semibold">Écart</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line/70">
+              {OOS_ROWS.map((row) => (
+                <tr key={row.label}>
+                  <th scope="row" className="px-5 py-3 font-semibold text-ink">{row.label}</th>
+                  <td className="px-3 py-3 text-slate-600">{row.det6}</td>
+                  <td className="px-3 py-3 text-slate-600">{row.fpr}</td>
+                  <td className="px-5 py-3 font-semibold text-ink">{row.score}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="border-t border-line px-5 py-4 text-sm leading-6 text-slate-600 sm:px-6">
+          Sur des faillites inconnues, les poids réglés sur le passé obtiennent
+          le même écart (détection moins fausses alertes) que ceux du site :
+          aucun signe que le réglage ait surappris. Les poids du site
+          privilégient simplement moins de fausses alertes. La détection plus
+          élevée sur 2021-2025 tient à la période elle-même, et pas au réglage.
+        </p>
       </section>
 
       <section aria-labelledby="examples-heading" className="space-y-5">

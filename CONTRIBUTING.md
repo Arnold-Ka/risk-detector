@@ -18,7 +18,7 @@ en amont (issue) avant d'écrire le code.
 ## Avant d'ouvrir une PR
 
 ```bash
-uv run pytest                 # 207 tests doivent passer
+uv run pytest                 # 209 tests doivent passer
 pnpm --dir frontend lint      # sans erreur
 pnpm --dir frontend build     # build Next.js valide
 ```

@@ -20,6 +20,6 @@ The pipeline reads left to right; each stage lives in its own package under `app
 8. **Serve** — `app/api/main.py` (public read-only routes; `/health` liveness, `/health/data` freshness via `app/health.py`) and `app/api/watchlist.py` (`/me/watchlist`, authenticated via the shared secret).
 9. **Frontend** — `frontend/` Next.js app; `lib/api.ts` calls the FastAPI backend, `lib/server-watchlist.ts` + `app/api/` route handlers forward Clerk-verified watchlist calls server-side with `WATCHLIST_API_SECRET`; `proxy.ts` is the Next 16 request proxy (Clerk middleware, no-op when Clerk keys are absent).
 
-Evaluation lives in `app/backtest/` (`cohort.py`, `metrics.py`) driven by `scripts/backtest.py` and `scripts/tune_weights.py`; README holds the baseline metrics any weight change must be compared against.
+Evaluation lives in `app/backtest/` (`cohort.py`, `metrics.py`) driven by `scripts/backtest.py`, `scripts/tune_weights.py` and `scripts/validate_oos.py` (temporal out-of-sample check of the weights); README holds the baseline metrics any weight change must be compared against.
 
 Workflows: `ci.yml` (pytest on an empty schema-only PostgreSQL + frontend lint/build, every push/PR), `nightly.yml` (scheduled nightly job) and `keepalive.yml` (pings the Render API `/health` every 14 min to avoid free-tier spin-down).

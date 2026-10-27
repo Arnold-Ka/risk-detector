@@ -55,6 +55,14 @@ faillites signalées à temps, signalées tard et manquées. Ses chiffres sont
 figés dans `frontend/app/methodology/page.tsx` : les régénérer après tout
 retune du composite.
 
+**Contrôle hors échantillon** (`uv run python -m scripts.validate_oos`) : des
+poids réglés uniquement sur les faillites 2015-2020, puis mesurés sur les 199
+faillites 2021-2025, obtiennent le même écart détection − fausses alertes que
+les poids de production (68,0 contre 68,0 ; 80,9 % / 12,9 % contre 74,9 % /
+6,9 %). Le réglage ne montre pas de surapprentissage ; les poids individuels,
+eux, sont instables d'une période à l'autre et ne mesurent pas
+l'« importance » d'un indicateur.
+
 ## Architecture
 
 - **Backend** — Python 3.14, FastAPI, PostgreSQL 17 (SQL brut via psycopg,
@@ -103,7 +111,7 @@ les comptes et la liste de suivi en local, copier `frontend/.env.example` vers
 `frontend/.env.local`, configurer les clés Clerk et partager la même valeur de
 `WATCHLIST_API_SECRET` entre ce fichier et le `.env` racine.
 
-Tests : `uv run pytest` (207 tests collectés).
+Tests : `uv run pytest` (209 tests collectés).
 
 Mise en production (GitHub Actions + Render + Vercel + Neon + Clerk) :
 voir [docs/DEPLOY.md](docs/DEPLOY.md).
@@ -126,7 +134,7 @@ uv run python -m scripts.backtest       # rejoue les métriques ci-dessus
 app/          API FastAPI + moteurs (normalize, signals, edgar, dl, ingest,
               backtest, jobs) — signaux purs et testables
 scripts/      commandes batch : collecte SEC, ingestion, backtest, entraînement
-tests/        suite pytest (207)
+tests/        suite pytest (209)
 frontend/     application Next.js 16
 data/         manifest de cohorte (versionné) + caches (gitignorés)
 docker-compose.yml
