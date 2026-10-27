@@ -9,24 +9,27 @@ services:
     name: risk-detector-api
     runtime: docker
     plan: free
+    # Même région que Neon (AWS us-east-2) : sans cette ligne, Render
+    # choisit l'Oregon et chaque requête SQL traverse les États-Unis.
+    region: ohio
     healthCheckPath: /health
     autoDeploy: true # un push sur master redéploie l'API
     envVars:
       # Chaîne Neon « pooled » (endpoint pooler, sslmode=require).
       # Saisie à la création : sync: false = valeur demandée au déploiement.
-      - id: DATABASE_URL
+      - key: DATABASE_URL
         sync: false
       # Nom + e-mail réels exigés par les conditions d'utilisation SEC.
       # L'API n'effectue aucune requête SEC ; cette valeur satisfait
       # uniquement app/config.py au démarrage.
-      - id: SEC_USER_AGENT
+      - key: SEC_USER_AGENT
         sync: false
       # Jamais utilisé par l'API, mais app/config.py exige la variable.
-      - id: CACHE_DIR
+      - key: CACHE_DIR
         value: data/cache
       # Origines du site autorisées pour les appels navigateur à l'API.
-      - id: FRONTEND_ORIGINS
+      - key: FRONTEND_ORIGINS
         sync: false
       # Secret partagé seulement avec les route handlers serveur de Vercel.
-      - id: WATCHLIST_API_SECRET
+      - key: WATCHLIST_API_SECRET
         sync: false
