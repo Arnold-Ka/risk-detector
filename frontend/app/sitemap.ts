@@ -26,7 +26,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority,
   });
 
-  const staticPages: MetadataRoute.Sitemap = [entry("/", 1, "weekly")];
+  const staticPages: MetadataRoute.Sitemap = [
+    entry("/", 1, "weekly"),
+    // Backtest publié : le contenu le plus convaincant pour un visiteur
+    // venu d'un moteur de recherche (feuille de route §7).
+    entry("/methodology", 0.8, "monthly"),
+  ];
 
   // API injoignable au moment de la génération : on renvoie les pages
   // statiques plutôt que d'échouer — la prochaine requête réessaiera.

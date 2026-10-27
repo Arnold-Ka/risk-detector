@@ -73,6 +73,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <div className="flex items-center gap-2 sm:gap-4">
             {clerkConfigured && <AccountControls />}
             <Link
+              href="/methodology"
+              className="hidden rounded-full border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-brand/30 hover:bg-brand-soft hover:text-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand md:inline-flex"
+            >
+              Méthodologie
+            </Link>
+            <Link
               href="/coverage"
               className="hidden rounded-full border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-brand/30 hover:bg-brand-soft hover:text-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand md:inline-flex"
             >
@@ -96,7 +102,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             Analyse informative fondée sur les dépôts publics. Elle ne constitue
             pas un conseil en investissement ni une prédiction de faillite.
           </p>
-          <p className="shrink-0 font-medium text-ink/70">
+          <p className="flex shrink-0 items-center gap-3 font-medium text-ink/70">
+            {/* Lien aussi présent dans le pied de page : la navigation le
+                masque sous md, le pied de page le garde visible sur mobile. */}
+            <Link href="/methodology" className="hover:text-brand hover:underline">
+              Méthodologie et résultats
+            </Link>
+            <span aria-hidden="true" className="text-slate-300">·</span>
             Sources : dépôts publics de la SEC
           </p>
         </div>

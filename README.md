@@ -50,6 +50,11 @@ Les poids des signaux ont été calibrés sur cette cohorte
 mesurées séparément (`scripts/train_lstm.py`) : sur ces données, les deux
 approches se complètent, le classique garde la meilleure détection à 6 mois.
 
+Le site publie ces résultats sur la page `/methodology`, avec des exemples de
+faillites signalées à temps, signalées tard et manquées. Ses chiffres sont
+figés dans `frontend/app/methodology/page.tsx` : les régénérer après tout
+retune du composite.
+
 ## Architecture
 
 - **Backend** — Python 3.14, FastAPI, PostgreSQL 17 (SQL brut via psycopg,
